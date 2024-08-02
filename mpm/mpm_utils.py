@@ -1,5 +1,12 @@
+import sys
+sys.path.append('..')
+
 import warp as wp
 import numpy as np
+
+from material.material_utils import get_cauchy_stress_neohookean, get_cauchy_stress_hencky
+
+
 
 def init_particles_rectangle(start_x, start_y, end_x, end_y, dx, n_grid_x, n_grid_y, PPD, n_particles):
     particle_id = 0
@@ -84,7 +91,9 @@ def assemble_residual(x_particles: wp.array(dtype=wp.vec2d),
                       p_rho: wp.float64,
                       lame_lambda: wp.float64,
                       lame_mu: wp.float64,
+                      material_type: wp.int32,
                       deformation_gradient: wp.array(dtype=wp.mat33d),
+                      particle_Cauchy_stress_array: wp.array(dtype=wp.mat33d),
                       n_grid_x: wp.int32,
                       n_nodes: wp.int32,
                       boundary_flag_array: wp.array(dtype=wp.bool),
@@ -165,21 +174,21 @@ def assemble_residual(x_particles: wp.array(dtype=wp.vec2d),
 
 
 
-    # # MLS modification
-    # if base_int[1]==0:
-    #     w = wp.matrix(
-    #         wp.float64(0.5)*wp.pow(wp.float64(1.5)-fx[0], wp.float64(2.0)), float64_zero,
-    #         wp.float64(0.75)-wp.pow(fx[0]-wp.float64(1.0), wp.float64(2.0)), float64_one - (fx[1]-float64_one),
-    #         wp.float64(0.5)*wp.pow(fx[0]-wp.float64(0.5), wp.float64(2.0)), fx[1]-float64_one,
-    #         shape=(3,2)
-    #     )
+    # MLS modification
+    if base_int[1]==0:
+        w = wp.matrix(
+            wp.float64(0.5)*wp.pow(wp.float64(1.5)-fx[0], wp.float64(2.0)), float64_zero,
+            wp.float64(0.75)-wp.pow(fx[0]-wp.float64(1.0), wp.float64(2.0)), float64_one - (fx[1]-float64_one),
+            wp.float64(0.5)*wp.pow(fx[0]-wp.float64(0.5), wp.float64(2.0)), fx[1]-float64_one,
+            shape=(3,2)
+        )
 
-    #     grad_w = wp.matrix(
-    #         (fx[0]-wp.float64(1.5))*inv_dx, float64_zero,
-    #         (wp.float64(2.0)-wp.float64(2.0)*fx[0])*inv_dx, -inv_dx,
-    #         (fx[0]-wp.float64(0.5))*inv_dx, inv_dx,
-    #         shape=(3,2)
-    #     )
+        grad_w = wp.matrix(
+            (fx[0]-wp.float64(1.5))*inv_dx, float64_zero,
+            (wp.float64(2.0)-wp.float64(2.0)*fx[0])*inv_dx, -inv_dx,
+            (fx[0]-wp.float64(0.5))*inv_dx, inv_dx,
+            shape=(3,2)
+        )
 
 
         
@@ -212,14 +221,40 @@ def assemble_residual(x_particles: wp.array(dtype=wp.vec2d),
 
     incr_F = wp.identity(n=2, dtype=wp.float64) + delta_u_GRAD
     incr_F_inv = wp.inverse(incr_F)
-    new_F = incr_F @ old_F
+    incr_F_3d = wp.matrix(
+                incr_F[0,0], incr_F[0,1], float64_zero,
+                incr_F[1,0], incr_F[1,1], float64_zero,
+                float64_zero, float64_zero, float64_one,
+                shape=(3,3)
+                )
+    new_F_3d = incr_F_3d @ old_F_3d
+    particle_J = wp.determinant(new_F_3d)
 
-    # Neo-Hookean: From deformation gradient to stress
-    # TODO: handle more complex cases
-    new_F_inv = wp.inverse(new_F)
-    particle_J = wp.determinant(new_F)
-    particle_PK1_stress = lame_mu * (new_F - wp.transpose(new_F_inv)) + lame_lambda * wp.log(particle_J) * wp.transpose(new_F_inv)
-    particle_Cauchy_stress = float64_one/particle_J * particle_PK1_stress @ wp.transpose(new_F)
+    # Get Cauchy stress depending on the material type
+    particle_Cauchy_stress_3d = wp.mat33d()
+    if material_type==0:
+        # Potential bug(?): particle_Cauchy_stress_3d = get_cauchy_stress_neohookean(...) does not give correct gradients
+        tmp = get_cauchy_stress_neohookean(new_F_3d, lame_lambda, lame_mu)
+        particle_Cauchy_stress_3d = wp.matrix(tmp[0,0], tmp[0,1], tmp[0,2],
+                                              tmp[1,0], tmp[1,1], tmp[1,2],
+                                              tmp[2,0], tmp[2,1], tmp[2,2],
+                                              shape=(3,3)
+                                              )
+    elif material_type==1:
+        tmp = get_cauchy_stress_hencky(new_F_3d, lame_lambda, lame_mu)
+        particle_Cauchy_stress_3d = wp.matrix(tmp[0,0], tmp[0,1], tmp[0,2],
+                                              tmp[1,0], tmp[1,1], tmp[1,2],
+                                              tmp[2,0], tmp[2,1], tmp[2,2],
+                                              shape=(3,3)
+                                              )
+    # For post-processing
+    particle_Cauchy_stress_array[p] = particle_Cauchy_stress_3d
+
+    particle_Cauchy_stress = wp.matrix(
+                             particle_Cauchy_stress_3d[0,0], particle_Cauchy_stress_3d[0,1],
+                             particle_Cauchy_stress_3d[1,0], particle_Cauchy_stress_3d[1,1],
+                             shape=(2,2)
+                             )
 
 
     new_p_vol = p_vol * particle_J
@@ -314,7 +349,6 @@ def from_increment_to_solution(increment: wp.array(dtype=wp.float64),
 @wp.kernel
 def G2P(x_particles: wp.array(dtype=wp.vec2d),
         deformation_gradient: wp.array(dtype=wp.mat33d),
-        particle_Cauchy_stress_array: wp.array(dtype=wp.mat33d),
         inv_dx: wp.float64,
         dx: wp.float64,
         lame_lambda: wp.float64,
@@ -385,21 +419,21 @@ def G2P(x_particles: wp.array(dtype=wp.vec2d),
     #     )
 
 
-    # # MLS modification
-    # if base_int[1]==0:
-    #     w = wp.matrix(
-    #         wp.float64(0.5)*wp.pow(wp.float64(1.5)-fx[0], wp.float64(2.0)), float64_zero,
-    #         wp.float64(0.75)-wp.pow(fx[0]-wp.float64(1.0), wp.float64(2.0)), float64_one - (fx[1]-float64_one),
-    #         wp.float64(0.5)*wp.pow(fx[0]-wp.float64(0.5), wp.float64(2.0)), fx[1]-float64_one,
-    #         shape=(3,2)
-    #     )
+    # MLS modification
+    if base_int[1]==0:
+        w = wp.matrix(
+            wp.float64(0.5)*wp.pow(wp.float64(1.5)-fx[0], wp.float64(2.0)), float64_zero,
+            wp.float64(0.75)-wp.pow(fx[0]-wp.float64(1.0), wp.float64(2.0)), float64_one - (fx[1]-float64_one),
+            wp.float64(0.5)*wp.pow(fx[0]-wp.float64(0.5), wp.float64(2.0)), fx[1]-float64_one,
+            shape=(3,2)
+        )
 
-    #     grad_w = wp.matrix(
-    #         (fx[0]-wp.float64(1.5))*inv_dx, float64_zero,
-    #         (wp.float64(2.0)-wp.float64(2.0)*fx[0])*inv_dx, -inv_dx,
-    #         (fx[0]-wp.float64(0.5))*inv_dx, inv_dx,
-    #         shape=(3,2)
-    #     )
+        grad_w = wp.matrix(
+            (fx[0]-wp.float64(1.5))*inv_dx, float64_zero,
+            (wp.float64(2.0)-wp.float64(2.0)*fx[0])*inv_dx, -inv_dx,
+            (fx[0]-wp.float64(0.5))*inv_dx, inv_dx,
+            shape=(3,2)
+        )
 
 
     # Loop on dofs
@@ -438,13 +472,7 @@ def G2P(x_particles: wp.array(dtype=wp.vec2d),
 
     x_particles[p] += delta_u
 
-    new_F_3d_inv = wp.inverse(deformation_gradient[p])
-    particle_J = wp.determinant(deformation_gradient[p])
-    particle_PK1_stress_3d = lame_mu * (deformation_gradient[p] - wp.transpose(new_F_3d_inv)) + lame_lambda * wp.log(particle_J) * wp.transpose(new_F_3d_inv)
-    particle_Cauchy_stress_3d = float64_one/particle_J * particle_PK1_stress_3d @ wp.transpose(deformation_gradient[p])
-    particle_Cauchy_stress_array[p] = particle_Cauchy_stress_3d
-
-
+    
 
 
 

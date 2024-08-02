@@ -1,10 +1,11 @@
+import sys
+sys.path.append('..')
+
 import warp as wp
 import warp.sparse as wps
 import warp.optim.linear
 
-
 import numpy as np
-
 
 from mpm.mpm_utils import init_particles_rectangle, initialization, P2G, assemble_residual, assemble_Jacobian_coo_format, from_increment_to_solution, G2P
 
@@ -31,6 +32,7 @@ class SimulatorQuasiStatic:
                  p_rho,
                  youngs_modulus,
                  poisson_ratio,
+                 material_name,
                  boundary_function_warp,
                  tol
         ):
@@ -86,6 +88,12 @@ class SimulatorQuasiStatic:
         self.lame_lambda = youngs_modulus*poisson_ratio / ((1.0+poisson_ratio) * (1.0-2.0*poisson_ratio))
         self.lame_mu = youngs_modulus / (2.0*(1.0+poisson_ratio))
 
+        self.material_type = 100
+        if material_name=='Neo-Hookean':
+            self.material_type = 0
+        elif material_name=='Hencky elasticity':
+            self.material_type = 1
+
 
         # Initialization
         wp.launch(kernel=initialization,
@@ -111,13 +119,16 @@ class SimulatorQuasiStatic:
 
         for iter_id in range(self.n_iter):
             self.rhs.zero_()
+            self.rows.zero_()
+            self.cols.zero_()
+            self.vals.zero_() # Check whether this can improve the 2D compaction involving plasticity
 
             tape = wp.Tape()
             with tape:
                 # assemble residual
                 wp.launch(kernel=assemble_residual,
                           dim=self.n_particles,
-                          inputs=[self.x_particles, self.inv_dx, self.dx, self.rhs, self.new_solution, self.old_solution, self.p_vol, self.p_rho, self.lame_lambda, self.lame_mu, self.deformation_gradient, self.n_grid_x, self.n_nodes, self.dofStruct.boundary_flag_array, current_step, total_step])
+                          inputs=[self.x_particles, self.inv_dx, self.dx, self.rhs, self.new_solution, self.old_solution, self.p_vol, self.p_rho, self.lame_lambda, self.lame_mu, self.material_type, self.deformation_gradient, self.particle_Cauchy_stress_array, self.n_grid_x, self.n_nodes, self.dofStruct.boundary_flag_array, current_step, total_step])
 
             # Assemble the Jacobian matrix using auto-differentiation
             for dof_iter in range(self.n_matrix_size): # Loop on dofs
@@ -178,8 +189,9 @@ class SimulatorQuasiStatic:
         # G2P
         wp.launch(kernel=G2P,
               dim=self.n_particles,
-              inputs=[self.x_particles, self.deformation_gradient, self.particle_Cauchy_stress_array, self.inv_dx, self.dx, self.lame_lambda, self.lame_mu, self.n_grid_x, self.n_nodes, self.new_solution, self.old_solution])
+              inputs=[self.x_particles, self.deformation_gradient, self.inv_dx, self.dx, self.lame_lambda, self.lame_mu, self.n_grid_x, self.n_nodes, self.new_solution, self.old_solution])
 
-        # # Calculate error
+        # Calculate error
+        # TODO
 
 

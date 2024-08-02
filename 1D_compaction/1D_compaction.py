@@ -8,11 +8,14 @@ import numpy as np
 
 import meshio
 
+
+
+
 # MPM setup parameters
 # Grid quantities
 n_grid_x = 20
 n_grid_y = 20
-max_x = 100.0
+max_x = 100.0 # m
 dx = max_x/n_grid_x
 inv_dx = float(n_grid_x/max_x)
 
@@ -21,12 +24,15 @@ n_particles = 40
 start_x = dx
 end_x = start_x + dx
 start_y = dx
-end_y = start_y + 50.0
+end_y = start_y + 50.0 # m
 PPD = 2 # Particles per direction
-p_vol = (dx/PPD)**2 
+p_vol = (dx/PPD)**2 # 2 indicates the spatial dimension
 p_rho = 0.08 # t/m^3
 youngs_modulus = 10.0 # kPa
 poisson_ratio = 0.0
+
+# Material model
+material_name = 'Hencky elasticity' #'Neo-Hookean'
 
 # Solver
 n_iter = 6
@@ -68,6 +74,7 @@ sim = SimulatorQuasiStatic(
                  p_rho=p_rho,
                  youngs_modulus=youngs_modulus,
                  poisson_ratio=poisson_ratio,
+                 material_name=material_name,
                  boundary_function_warp=set_boundary_dofs,
                  tol=tol
                  )
