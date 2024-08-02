@@ -97,6 +97,9 @@ def assemble_residual(x_particles: wp.array(dtype=wp.vec2d),
                       n_grid_x: wp.int32,
                       n_nodes: wp.int32,
                       boundary_flag_array: wp.array(dtype=wp.bool),
+                      total_external_force: wp.array(dtype=wp.vec2d), # length = 1
+                      particle_external_flag_array: wp.array(dtype=wp.bool),
+                      gravity_load_scale: wp.float64,
                       current_step: wp.float64,
                       total_step: wp.float64
                       ):
@@ -106,7 +109,7 @@ def assemble_residual(x_particles: wp.array(dtype=wp.vec2d),
     float64_zero = wp.float64(0.0)
     float64_pi = wp.float64(3.141592653)
 
-    standard_gravity = wp.vec2d(float64_zero, wp.float64(-10.0)*(current_step+float64_one)/total_step)
+    standard_gravity = wp.vec2d(float64_zero, gravity_load_scale*wp.float64(-10.0)*(current_step+float64_one)/total_step)
 
     # Calculate shape functions
     base_x = x_particles[p][0] * inv_dx - wp.float64(0.5)
@@ -261,6 +264,13 @@ def assemble_residual(x_particles: wp.array(dtype=wp.vec2d),
     new_p_rho = p_rho / particle_J
 
 
+    # External force
+    f_ext = (current_step+float64_one)/total_step * total_external_force[0]
+    if particle_external_flag_array[p]==False:
+        f_ext = wp.vec2d()
+
+
+
     for i in range(0, 3):
         for j in range(0, 3):
             dpos = ( wp.vec2d(wp.float64(i), wp.float64(j)) - fx) * dx
@@ -274,7 +284,7 @@ def assemble_residual(x_particles: wp.array(dtype=wp.vec2d),
             index_ij_x = ix + iy*(n_grid_x + wp.int(1))
             index_ij_y = index_ij_x + n_nodes
 
-            rhs_value = (-weight_grad @ particle_Cauchy_stress + weight * new_p_rho * standard_gravity) * new_p_vol # Updated Lagrangian
+            rhs_value = (-weight_grad @ particle_Cauchy_stress + weight * new_p_rho * standard_gravity) * new_p_vol + weight * f_ext # Updated Lagrangian
 
 
 

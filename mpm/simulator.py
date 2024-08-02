@@ -34,7 +34,8 @@ class SimulatorQuasiStatic:
                  poisson_ratio,
                  material_name,
                  boundary_function_warp,
-                 tol
+                 tol,
+                 gravity_load_scale=1.0
         ):
         # Grid quantities
         self.n_grid_x = n_grid_x
@@ -62,8 +63,12 @@ class SimulatorQuasiStatic:
 
         # Solver
         self.n_iter = n_iter
-        self.boundary_function_warp = boundary_function_warp
+        self.boundary_function_warp = boundary_function_warp # TODO: delete
         self.tol = tol
+
+        # Load
+        self.gravity_load_scale = gravity_load_scale
+        self.total_external_force = wp.array(shape=1, dtype=wp.vec2d)
 
 
         # Material point quantities
@@ -80,6 +85,7 @@ class SimulatorQuasiStatic:
         self.x_particles = wp.from_numpy(particles_pos_np, dtype=wp.vec2d)
         self.x0_particles = wp.from_numpy(particles_pos_np, dtype=wp.vec2d)
         self.deformation_gradient = wp.zeros(shape=self.n_particles, dtype=wp.mat33d)
+        self.particle_external_flag_array = wp.zeros(shape=self.n_particles, dtype=wp.bool)
         self.particle_Cauchy_stress_array = wp.zeros(shape=self.n_particles, dtype=wp.mat33d)
 
         # Material properties
@@ -100,10 +106,10 @@ class SimulatorQuasiStatic:
                   dim=self.n_particles,
                   inputs=[self.deformation_gradient])
 
-        # Specify Dirichlet boundary conditions
-        wp.launch(kernel=self.boundary_function_warp,
-                  dim=(self.n_grid_x+1, self.n_grid_y+1),
-                  inputs=[self.dofStruct.boundary_flag_array, self.n_grid_x, self.n_nodes])
+        # # Specify Dirichlet boundary conditions
+        # wp.launch(kernel=self.boundary_function_warp,
+        #           dim=(self.n_grid_x+1, self.n_grid_y+1),
+        #           inputs=[self.dofStruct.boundary_flag_array, self.n_grid_x, self.n_nodes])
 
 
 
@@ -128,7 +134,7 @@ class SimulatorQuasiStatic:
                 # assemble residual
                 wp.launch(kernel=assemble_residual,
                           dim=self.n_particles,
-                          inputs=[self.x_particles, self.inv_dx, self.dx, self.rhs, self.new_solution, self.old_solution, self.p_vol, self.p_rho, self.lame_lambda, self.lame_mu, self.material_type, self.deformation_gradient, self.particle_Cauchy_stress_array, self.n_grid_x, self.n_nodes, self.dofStruct.boundary_flag_array, current_step, total_step])
+                          inputs=[self.x_particles, self.inv_dx, self.dx, self.rhs, self.new_solution, self.old_solution, self.p_vol, self.p_rho, self.lame_lambda, self.lame_mu, self.material_type, self.deformation_gradient, self.particle_Cauchy_stress_array, self.n_grid_x, self.n_nodes, self.dofStruct.boundary_flag_array, self.total_external_force, self.particle_external_flag_array, self.gravity_load_scale, current_step, total_step])
 
             # Assemble the Jacobian matrix using auto-differentiation
             for dof_iter in range(self.n_matrix_size): # Loop on dofs

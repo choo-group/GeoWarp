@@ -79,6 +79,11 @@ sim = SimulatorQuasiStatic(
                  tol=tol
                  )
 
+# Specify Dirichlet boundary conditions
+wp.launch(kernel=set_boundary_dofs,
+          dim=(sim.n_grid_x+1, sim.n_grid_y+1),
+          inputs=[sim.dofStruct.boundary_flag_array, sim.n_grid_x, sim.n_nodes])
+
 # Initial particle configuration
 x_numpy = np.array(sim.x_particles.numpy())
 output_particles = meshio.Mesh(points=x_numpy, cells=[], point_data={'stress_yy': sim.particle_Cauchy_stress_array.numpy()[:,1,1]})
