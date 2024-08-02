@@ -36,8 +36,8 @@ def initialization(deformation_gradient: wp.array(dtype=wp.mat33d)):
     float64_zero = wp.float64(0.0)
 
     identity_matrix = wp.matrix(
-                      float64_one, float64_zero, float64_zero,
-                      float64_zero, float64_one, float64_zero,
+                      float64_one+wp.float64(1e-7), float64_zero, float64_zero, # Perturbation is important to get correct gradients at the first load step
+                      float64_zero, float64_one-wp.float64(1e-6), float64_zero,
                       float64_zero, float64_zero, float64_one,
                       shape=(3,3)
         )
@@ -174,21 +174,21 @@ def assemble_residual(x_particles: wp.array(dtype=wp.vec2d),
 
 
 
-    # MLS modification
-    if base_int[1]==0:
-        w = wp.matrix(
-            wp.float64(0.5)*wp.pow(wp.float64(1.5)-fx[0], wp.float64(2.0)), float64_zero,
-            wp.float64(0.75)-wp.pow(fx[0]-wp.float64(1.0), wp.float64(2.0)), float64_one - (fx[1]-float64_one),
-            wp.float64(0.5)*wp.pow(fx[0]-wp.float64(0.5), wp.float64(2.0)), fx[1]-float64_one,
-            shape=(3,2)
-        )
+    # # MLS modification
+    # if base_int[1]==0:
+    #     w = wp.matrix(
+    #         wp.float64(0.5)*wp.pow(wp.float64(1.5)-fx[0], wp.float64(2.0)), float64_zero,
+    #         wp.float64(0.75)-wp.pow(fx[0]-wp.float64(1.0), wp.float64(2.0)), float64_one - (fx[1]-float64_one),
+    #         wp.float64(0.5)*wp.pow(fx[0]-wp.float64(0.5), wp.float64(2.0)), fx[1]-float64_one,
+    #         shape=(3,2)
+    #     )
 
-        grad_w = wp.matrix(
-            (fx[0]-wp.float64(1.5))*inv_dx, float64_zero,
-            (wp.float64(2.0)-wp.float64(2.0)*fx[0])*inv_dx, -inv_dx,
-            (fx[0]-wp.float64(0.5))*inv_dx, inv_dx,
-            shape=(3,2)
-        )
+    #     grad_w = wp.matrix(
+    #         (fx[0]-wp.float64(1.5))*inv_dx, float64_zero,
+    #         (wp.float64(2.0)-wp.float64(2.0)*fx[0])*inv_dx, -inv_dx,
+    #         (fx[0]-wp.float64(0.5))*inv_dx, inv_dx,
+    #         shape=(3,2)
+    #     )
 
 
         
@@ -419,21 +419,21 @@ def G2P(x_particles: wp.array(dtype=wp.vec2d),
     #     )
 
 
-    # MLS modification
-    if base_int[1]==0:
-        w = wp.matrix(
-            wp.float64(0.5)*wp.pow(wp.float64(1.5)-fx[0], wp.float64(2.0)), float64_zero,
-            wp.float64(0.75)-wp.pow(fx[0]-wp.float64(1.0), wp.float64(2.0)), float64_one - (fx[1]-float64_one),
-            wp.float64(0.5)*wp.pow(fx[0]-wp.float64(0.5), wp.float64(2.0)), fx[1]-float64_one,
-            shape=(3,2)
-        )
+    # # MLS modification
+    # if base_int[1]==0:
+    #     w = wp.matrix(
+    #         wp.float64(0.5)*wp.pow(wp.float64(1.5)-fx[0], wp.float64(2.0)), float64_zero,
+    #         wp.float64(0.75)-wp.pow(fx[0]-wp.float64(1.0), wp.float64(2.0)), float64_one - (fx[1]-float64_one),
+    #         wp.float64(0.5)*wp.pow(fx[0]-wp.float64(0.5), wp.float64(2.0)), fx[1]-float64_one,
+    #         shape=(3,2)
+    #     )
 
-        grad_w = wp.matrix(
-            (fx[0]-wp.float64(1.5))*inv_dx, float64_zero,
-            (wp.float64(2.0)-wp.float64(2.0)*fx[0])*inv_dx, -inv_dx,
-            (fx[0]-wp.float64(0.5))*inv_dx, inv_dx,
-            shape=(3,2)
-        )
+    #     grad_w = wp.matrix(
+    #         (fx[0]-wp.float64(1.5))*inv_dx, float64_zero,
+    #         (wp.float64(2.0)-wp.float64(2.0)*fx[0])*inv_dx, -inv_dx,
+    #         (fx[0]-wp.float64(0.5))*inv_dx, inv_dx,
+    #         shape=(3,2)
+    #     )
 
 
     # Loop on dofs
