@@ -13,14 +13,14 @@ import meshio
 
 # MPM setup parameters
 # Grid quantities
-n_grid_x = 30
-n_grid_y = 30
+n_grid_x = 60 #30
+n_grid_y = 60 #30
 max_x = 15.0 # m
 dx = max_x/n_grid_x
 inv_dx = float(n_grid_x/max_x)
 
 # Material point quantities
-n_particles = 1440
+n_particles = 5760 #1440
 l0 = 10.0
 d0 = 1.0
 start_x = dx
@@ -34,12 +34,12 @@ youngs_modulus = 12000.0 # kPa
 poisson_ratio = 0.2
 
 # Material model
-material_name = 'Neo-Hookean'  #'Hencky elasticity'
+material_name = 'Hencky elasticity' #'Neo-Hookean'
 
 # Solver
 n_iter = 10
-tol = 1e-10
-
+tol = 1e-9
+solver_name = 'pyamg' # 'Warp'
 
 
 # Set boundary dofs
@@ -105,6 +105,7 @@ sim = SimulatorQuasiStatic(
                  material_name=material_name,
                  boundary_function_warp=set_boundary_dofs,
                  tol=tol,
+                 solver_name=solver_name,
                  gravity_load_scale=0.0
                  )
 

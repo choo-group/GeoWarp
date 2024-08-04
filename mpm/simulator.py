@@ -7,6 +7,10 @@ import warp.optim.linear
 
 import numpy as np
 
+import scipy.linalg as sla # check whether this is needed
+from scipy import sparse
+from pyamg import smoothed_aggregation_solver
+
 from mpm.mpm_utils import init_particles_rectangle, initialization, P2G, assemble_residual, assemble_Jacobian_coo_format, from_increment_to_solution, G2P
 
 
@@ -35,6 +39,7 @@ class SimulatorQuasiStatic:
                  material_name,
                  boundary_function_warp,
                  tol,
+                 solver_name='Warp',
                  gravity_load_scale=1.0
         ):
         # Grid quantities
@@ -65,6 +70,7 @@ class SimulatorQuasiStatic:
         self.n_iter = n_iter
         self.boundary_function_warp = boundary_function_warp # TODO: delete
         self.tol = tol
+        self.solver_name = solver_name
 
         # Load
         self.gravity_load_scale = gravity_load_scale
@@ -157,12 +163,23 @@ class SimulatorQuasiStatic:
                 tape.zero()
 
 
-            # Create sparse matrix from a corresponding COOrdinate (a.k.a. triplet) format
-            wps.bsr_set_from_triplets(self.bsr_matrix, self.rows, self.cols, self.vals)
+            if self.solver_name=='Warp':
+                # Create sparse matrix from a corresponding COOrdinate (a.k.a. triplet) format
+                wps.bsr_set_from_triplets(self.bsr_matrix, self.rows, self.cols, self.vals)
 
-            # Solve
-            preconditioner = wp.optim.linear.preconditioner(self.bsr_matrix, ptype='diag')
-            solver_state = wp.optim.linear.bicgstab(A=self.bsr_matrix, b=self.rhs, x=self.increment, tol=1e-10, M=preconditioner)
+                # Warp solve
+                preconditioner = wp.optim.linear.preconditioner(self.bsr_matrix, ptype='diag')
+                solver_state = wp.optim.linear.bicgstab(A=self.bsr_matrix, b=self.rhs, x=self.increment, tol=1e-10, M=preconditioner)
+            elif self.solver_name=='pyamg':
+                bsr_matrix_pyamg = sparse.coo_matrix((self.vals.numpy(), (self.rows.numpy(), self.cols.numpy())), shape=(self.n_matrix_size, self.n_matrix_size)).asformat('csr')
+
+                # Pyamg solver
+                mls = smoothed_aggregation_solver(bsr_matrix_pyamg)
+                b = self.rhs.numpy()
+                x_pyamg = mls.solve(b, tol=self.tol, accel='bicgstab')
+                self.increment = wp.from_numpy(x_pyamg, dtype=wp.float64)
+
+
 
             # From increment to solution
             wp.launch(kernel=from_increment_to_solution,
