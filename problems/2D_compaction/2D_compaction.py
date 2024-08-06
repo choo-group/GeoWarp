@@ -1,7 +1,7 @@
 import sys
-sys.path.append('..')
+sys.path.append('../..')
 
-from mpm.simulator import SimulatorQuasiStatic
+from simulators.simulator import SimulatorQuasiStatic
 
 import warp as wp
 import numpy as np
@@ -13,29 +13,29 @@ import meshio
 
 # MPM setup parameters
 # Grid quantities
-n_grid_x = 20
-n_grid_y = 20
-max_x = 100.0 # m
+n_grid_x = 40
+n_grid_y = 40
+max_x = 20.0 # m
 dx = max_x/n_grid_x
 inv_dx = float(n_grid_x/max_x)
 
 # Material point quantities
-n_particles = 40
+n_particles = 9216
 start_x = dx
-end_x = start_x + dx
+end_x = start_x + 8.0 # m
 start_y = dx
-end_y = start_y + 50.0 # m
-PPD = 2 # Particles per direction
+end_y = start_y + 8.0 # m
+PPD = 6 # Particles per direction
 p_vol = (dx/PPD)**2 # 2 indicates the spatial dimension
-p_rho = 0.08 # t/m^3
-youngs_modulus = 10.0 # kPa
-poisson_ratio = 0.0
+p_rho = 1.0 # t/m^3
+youngs_modulus = 100.0 # kPa
+poisson_ratio = 0.3
 
 # Material model
-material_name = 'Hencky elasticity' #'Neo-Hookean'
+material_name = 'Hencky elasticity' #'Neo-Hookean' 
 
 # Solver
-n_iter = 6
+n_iter = 10
 tol = 1e-10
 
 
@@ -51,7 +51,7 @@ def set_boundary_dofs(boundary_flag_array: wp.array(dtype=wp.bool),
     dof_y = dof_x + n_nodes
 
     # Modify Dirichlet B.C. accordingly
-    if node_idx<=1 or node_idx>=2:
+    if node_idx<=1:
         boundary_flag_array[dof_x] = True
 
     if node_idy<=1:
@@ -87,7 +87,7 @@ wp.launch(kernel=set_boundary_dofs,
 # Initial particle configuration
 x_numpy = np.array(sim.x_particles.numpy())
 output_particles = meshio.Mesh(points=x_numpy, cells=[], point_data={'stress_yy': sim.particle_Cauchy_stress_array.numpy()[:,1,1]})
-output_particles.write("./vtk/1d_compaction_particles_%d.vtk" % (0))
+output_particles.write("./vtk/2d_compaction_particles_%d.vtk" % (0))
 
 n_steps = 40
 for step in range(n_steps):
@@ -97,5 +97,5 @@ for step in range(n_steps):
 	# Post-processing
     x_numpy = np.array(sim.x_particles.numpy())
     output_particles = meshio.Mesh(points=x_numpy, cells=[], point_data={'stress_yy': sim.particle_Cauchy_stress_array.numpy()[:,1,1]})
-    output_particles.write("./vtk/1d_compaction_particles_%d.vtk" % (step+1))
+    output_particles.write("./vtk/2d_compaction_particles_%d.vtk" % (step+1))
 

@@ -1,7 +1,7 @@
 import sys
-sys.path.append('..')
+sys.path.append('../..')
 
-from mpm.simulator import SimulatorQuasiStatic
+from simulators.simulator import SimulatorQuasiStatic
 
 import warp as wp
 import numpy as np

@@ -4,7 +4,7 @@ sys.path.append('..')
 import warp as wp
 import numpy as np
 
-from material.material_utils import get_cauchy_stress_neohookean, get_cauchy_stress_hencky
+from material_models.material_utils import get_cauchy_stress_neohookean, get_cauchy_stress_hencky
 
 
 

@@ -11,7 +11,7 @@ import scipy.linalg as sla # check whether this is needed
 from scipy import sparse
 from pyamg import smoothed_aggregation_solver
 
-from mpm.mpm_utils import init_particles_rectangle, initialization, P2G, assemble_residual, assemble_Jacobian_coo_format, from_increment_to_solution, G2P
+from simulators.mpm_utils import init_particles_rectangle, initialization, P2G, assemble_residual, assemble_Jacobian_coo_format, from_increment_to_solution, G2P
 
 
 @wp.struct
