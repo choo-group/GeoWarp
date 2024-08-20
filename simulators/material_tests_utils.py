@@ -4,7 +4,7 @@ sys.path.append('..')
 import warp as wp
 import numpy as np
 
-from material_models.material_utils import return_mapping_J2
+from material_models.material_utils import return_mapping_J2, return_mapping_DP, return_mapping_DP_no_iteration
 
 
 @wp.kernel
@@ -64,14 +64,14 @@ def calculate_stress_residual_J2(new_strain_vector: wp.array(dtype=wp.float64), 
     float64_zero = wp.float64(0.0)
 
     # Here assuming the strain only involves normal components (i.e., no shearing)
-    new_strain = wp.matrix(
+    trial_strain = wp.matrix(
                  new_strain_vector[0], float64_zero, float64_zero,
                  float64_zero, new_strain_vector[1], float64_zero,
                  float64_zero, float64_zero, new_strain_vector[2],
                  shape=(3,3)
                  )
 
-    e_real = return_mapping_J2(new_strain, lame_lambda, lame_mu, kappa)
+    e_real = return_mapping_J2(trial_strain, lame_lambda, lame_mu, kappa)
 
     e_trace = wp.trace(e_real)
 
@@ -94,6 +94,66 @@ def calculate_stress_residual_J2(new_strain_vector: wp.array(dtype=wp.float64), 
 
 
 @wp.kernel
+def calculate_stress_residual_DP(new_strain_vector: wp.array(dtype=wp.float64), # Voigt notation
+                                 new_elastic_strain_vector: wp.array(dtype=wp.float64),
+                                 lame_lambda: wp.float64,
+                                 lame_mu: wp.float64,
+                                 friction_angle: wp.float64,
+                                 dilation_angle: wp.float64,
+                                 cohesion: wp.float64,
+                                 shape_factor: wp.float64,
+                                 tol: wp.float64,
+                                 target_stress_xx: wp.float64,
+                                 target_stress_yy: wp.float64,
+                                 rhs: wp.array(dtype=wp.float64),
+                                 saved_stress: wp.array(dtype=wp.mat33d),
+                                 real_strain_array: wp.array(dtype=wp.mat33d),
+                                 P_trial_array: wp.array(dtype=wp.float64),
+                                 Q_trial_array: wp.array(dtype=wp.float64),
+                                 tau_trial_array: wp.array(dtype=wp.mat33d),
+                                 delta_lambda_array: wp.array(dtype=wp.float64)):
+
+    float64_one = wp.float64(1.0)
+    float64_zero = wp.float64(0.0)
+
+    # Here assuming the strain only involves normal components (i.e., no shearing)
+    trial_strain = wp.matrix(
+                 new_strain_vector[0], float64_zero, float64_zero,
+                 float64_zero, new_strain_vector[1], float64_zero,
+                 float64_zero, float64_zero, new_strain_vector[2],
+                 shape=(3,3)
+                 )
+
+    e_real = return_mapping_DP(trial_strain, lame_lambda, lame_mu, friction_angle, dilation_angle, cohesion, shape_factor, tol, real_strain_array, P_trial_array, Q_trial_array, tau_trial_array, delta_lambda_array)
+    # e_real = return_mapping_DP_no_iteration(trial_strain, lame_lambda, lame_mu, friction_angle, dilation_angle, cohesion, shape_factor, tol, real_strain_array)
+    # e_real = trial_strain
+
+    new_elastic_strain_vector[0] = e_real[0,0]
+    new_elastic_strain_vector[1] = e_real[1,1]
+    new_elastic_strain_vector[2] = e_real[2,2]
+
+    e_trace = wp.trace(e_real)
+
+    stress_principal = lame_lambda*e_trace*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*e_real
+
+    saved_stress[0] = stress_principal
+
+    # Here assuming the stress only involves normal components (i.e., no shearing)
+    target_stress = wp.matrix(
+                    target_stress_xx, float64_zero, float64_zero,
+                    float64_zero, target_stress_yy, float64_zero,
+                    float64_zero, float64_zero, stress_principal[2,2],
+                    shape=(3,3)
+                    )
+    stress_residual = target_stress - stress_principal
+
+    # Assemble to rhs
+    wp.atomic_add(rhs, 0, stress_residual[0,0])
+    wp.atomic_add(rhs, 1, stress_residual[1,1])
+
+
+
+@wp.kernel
 def assemble_Jacobian_coo_format_material_tests(jacobian_wp: wp.array(dtype=wp.float64),
                                                 rows: wp.array(dtype=wp.int32),
                                                 cols: wp.array(dtype=wp.int32),
@@ -103,7 +163,16 @@ def assemble_Jacobian_coo_format_material_tests(jacobian_wp: wp.array(dtype=wp.f
 
     rows[6*dof_iter + column_index] = dof_iter
     cols[6*dof_iter + column_index] = column_index
+
+
     vals[6*dof_iter + column_index] = jacobian_wp[column_index]
+
+
+    # Triaxial test 
+    vals[6*2 + 2] = wp.float64(1.0)
+    vals[6*3 + 3] = wp.float64(1.0)
+    vals[6*4 + 4] = wp.float64(1.0)
+    vals[6*5 + 5] = wp.float64(1.0)
 
 
 
@@ -123,3 +192,12 @@ def from_increment_to_solution_triaxial(strain_increment: wp.array(dtype=wp.floa
 
     if i!=2 and i!=3 and i!=4:
         new_strain_vector[i] -= strain_increment[i] # TODO: check why
+
+
+@wp.kernel
+def set_new_strain_vector_to_elastic_strain(new_strain_vector: wp.array(dtype=wp.float64),
+                                            new_elastic_strain_vector: wp.array(dtype=wp.float64)):
+    
+    new_strain_vector[0] = new_elastic_strain_vector[0]
+    new_strain_vector[1] = new_elastic_strain_vector[1]
+    new_strain_vector[2] = new_elastic_strain_vector[2]
