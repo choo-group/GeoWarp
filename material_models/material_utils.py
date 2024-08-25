@@ -131,11 +131,7 @@ def return_mapping_DP(trial_strain: wp.mat33d, # trial principal strain
                       cohesion: wp.float64,
                       shape_factor: wp.float64,
                       tol: wp.float64,
-                      real_strain_array: wp.array(dtype=wp.mat33d),
-                      P_trial_array: wp.array(dtype=wp.float64),
-                      Q_trial_array: wp.array(dtype=wp.float64),
-                      tau_trial_array: wp.array(dtype=wp.mat33d),
-                      delta_lambda_array: wp.array(dtype=wp.float64)) -> wp.mat33d:
+                      real_strain_array: wp.array(dtype=wp.mat33d)) -> wp.mat33d:
 
     float64_one = wp.float64(1.0)
     float64_zero = wp.float64(0.0)
@@ -159,9 +155,9 @@ def return_mapping_DP(trial_strain: wp.mat33d, # trial principal strain
     S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
     Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
 
-    P_trial_array[0] = P_trial
-    Q_trial_array[0] = Q_trial
-    tau_trial_array[0] = tau_trial
+    # P_trial_array[0] = P_trial
+    # Q_trial_array[0] = Q_trial
+    # tau_trial_array[0] = tau_trial
 
     # Check yield
     yield_y = yield_function_DP(P_trial, Q_trial, friction_angle, dilation_angle, cohesion, shape_factor)
@@ -176,7 +172,7 @@ def return_mapping_DP(trial_strain: wp.mat33d, # trial principal strain
 
         
         delta_lambda = wp.float64(0.) # Local iter converges weel, but seems this will affect the outer gradient calculation
-        delta_lambda_array[0] = delta_lambda
+        # delta_lambda_array[0] = delta_lambda
 
         real_strain_array[0] = trial_strain
 
@@ -185,24 +181,24 @@ def return_mapping_DP(trial_strain: wp.mat33d, # trial principal strain
         convergence_flag = wp.float64(0.0)
 
         for local_iter in range(10):
-            P_trial_iter = P_trial_array[local_iter]
-            Q_trial_iter = Q_trial_array[local_iter]
-            tau_trial_iter = tau_trial_array[local_iter]
-            delta_lambda_iter = delta_lambda_array[local_iter]
+            # P_trial_iter = P_trial_array[local_iter]
+            # Q_trial_iter = Q_trial_array[local_iter]
+            # tau_trial_iter = tau_trial_array[local_iter]
+            # delta_lambda_iter = delta_lambda_array[local_iter]
 
-            grad_g = grad_potential_DP(tau_trial_iter[0,0], tau_trial_iter[1,1], tau_trial_iter[2,2], Q_trial_iter, dilation_angle, cohesion, shape_factor)
-            grad_f = grad_yield_DP(tau_trial_iter[0,0], tau_trial_iter[1,1], tau_trial_iter[2,2], Q_trial_iter, friction_angle, cohesion, shape_factor)
+            grad_g = grad_potential_DP(tau_trial[0,0], tau_trial[1,1], tau_trial[2,2], Q_trial, dilation_angle, cohesion, shape_factor)
+            grad_f = grad_yield_DP(tau_trial[0,0], tau_trial[1,1], tau_trial[2,2], Q_trial, friction_angle, cohesion, shape_factor)
             grad_f_eps = grad_yield_epsilon_DP(elastic_a, grad_f)
 
             hess_g = hess_potential_DP(S_trial, Q_trial, dilation_angle, cohesion, shape_factor)
             hess_g_eps = hess_potential_epsilon_DP(hess_g, elastic_a)
 
-            yield_y = yield_function_DP(P_trial_iter, Q_trial_iter, friction_angle, dilation_angle, cohesion, shape_factor)
+            yield_y = yield_function_DP(P_trial, Q_trial, friction_angle, dilation_angle, cohesion, shape_factor)
 
             residual = wp.vec4d(
-                       real_strain_array[local_iter][0,0] - trial_strain[0,0] + delta_lambda_iter*grad_g[0],
-                       real_strain_array[local_iter][1,1] - trial_strain[1,1] + delta_lambda_iter*grad_g[1],
-                       real_strain_array[local_iter][2,2] - trial_strain[2,2] + delta_lambda_iter*grad_g[2],
+                       real_strain_array[local_iter][0,0] - trial_strain[0,0] + delta_lambda*grad_g[0],
+                       real_strain_array[local_iter][1,1] - trial_strain[1,1] + delta_lambda*grad_g[1],
+                       real_strain_array[local_iter][2,2] - trial_strain[2,2] + delta_lambda*grad_g[2],
                        yield_y
                        )
 
@@ -216,9 +212,9 @@ def return_mapping_DP(trial_strain: wp.mat33d, # trial principal strain
 
             # Assemble Jacobian
             jacobian = wp.mat44d(
-                       wp.float64(1.) + delta_lambda_iter*hess_g_eps[0,0], delta_lambda_iter*hess_g_eps[0,1], delta_lambda_iter*hess_g_eps[0,2], grad_g[0],
-                       delta_lambda_iter*hess_g_eps[1,0], wp.float64(1.) + delta_lambda_iter*hess_g_eps[1,1], delta_lambda_iter*hess_g_eps[1,2], grad_g[1],
-                       delta_lambda_iter*hess_g_eps[2,0], delta_lambda_iter*hess_g_eps[2,1], wp.float64(1.) + delta_lambda_iter*hess_g_eps[2,2], grad_g[2],
+                       wp.float64(1.) + delta_lambda*hess_g_eps[0,0], delta_lambda*hess_g_eps[0,1], delta_lambda*hess_g_eps[0,2], grad_g[0],
+                       delta_lambda*hess_g_eps[1,0], wp.float64(1.) + delta_lambda*hess_g_eps[1,1], delta_lambda*hess_g_eps[1,2], grad_g[1],
+                       delta_lambda*hess_g_eps[2,0], delta_lambda*hess_g_eps[2,1], wp.float64(1.) + delta_lambda*hess_g_eps[2,2], grad_g[2],
                        grad_f_eps[0], grad_f_eps[1], grad_f_eps[2], wp.float64(0.)
                        )
             xdelta = wp.inverse(jacobian) @ residual
@@ -240,8 +236,8 @@ def return_mapping_DP(trial_strain: wp.mat33d, # trial principal strain
                            )
             real_strain_array[local_iter+1] = real_strain_array[local_iter] + delta_strain
 
-            # delta_lambda = delta_lambda - xdelta[3]
-            delta_lambda_array[local_iter+1] = delta_lambda_array[local_iter] - xdelta[3]
+            delta_lambda = delta_lambda - xdelta[3]
+            # delta_lambda_array[local_iter+1] = delta_lambda_array[local_iter] - xdelta[3]
 
             tmp = wp.mat33d(wp.float64(1.), wp.float64(0.), wp.float64(0.),
                             wp.float64(0.), wp.float64(0.), wp.float64(0.),
@@ -251,13 +247,18 @@ def return_mapping_DP(trial_strain: wp.mat33d, # trial principal strain
 
 
             # Update stress
-            eps_v_iter = wp.trace(real_strain_array[local_iter+1])
-            tau_trial_array[local_iter+1] = lame_lambda*eps_v_iter*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain_array[local_iter+1]
+            eps_v = wp.trace(real_strain_array[local_iter+1])
+            tau_trial = lame_lambda*eps_v*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain_array[local_iter+1]
 
-            P_trial_array[local_iter+1] = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_trial_array[local_iter+1])
-            S_trial = tau_trial_array[local_iter+1] - P_trial_array[local_iter+1]*wp.identity(n=3, dtype=wp.float64)
+            # P_trial_array[local_iter+1] = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_trial_array[local_iter+1])
+            # S_trial = tau_trial_array[local_iter+1] - P_trial_array[local_iter+1]*wp.identity(n=3, dtype=wp.float64)
+            # S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
+            # Q_trial_array[local_iter+1] = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
+
+            P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_trial)
+            S_trial = tau_trial - P_trial*wp.identity(n=3, dtype=wp.float64)
             S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
-            Q_trial_array[local_iter+1] = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
+            Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
 
 
             real_strain = wp.mat33d(

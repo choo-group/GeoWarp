@@ -21,8 +21,8 @@ target_stress_zz = -100.0
 # Material properties
 youngs_modulus = 25000.0 # kPa
 poisson_ratio = 0.3
-# plasticity_dict = {'friction_angle': 35.0, 'dilation_angle': 5.0, 'cohesion': 1.0, 'shape_factor': 0.0}
-plasticity_dict = {'friction_angle': 35.0, 'dilation_angle': 15.0, 'cohesion': 0.0, 'shape_factor': 0.0}
+plasticity_dict = {'friction_angle': 35.0, 'dilation_angle': 5.0, 'cohesion': 1.0, 'shape_factor': 0.0}
+# plasticity_dict = {'friction_angle': 35.0, 'dilation_angle': 15.0, 'cohesion': 0.0, 'shape_factor': 0.0}
 # plasticity_dict = {'friction_angle': 35.0, 'dilation_angle': 0.0, 'cohesion': 0.0, 'shape_factor': 0.0}
 
 

@@ -107,11 +107,7 @@ def calculate_stress_residual_DP(new_strain_vector: wp.array(dtype=wp.float64), 
                                  target_stress_yy: wp.float64,
                                  rhs: wp.array(dtype=wp.float64),
                                  saved_stress: wp.array(dtype=wp.mat33d),
-                                 real_strain_array: wp.array(dtype=wp.mat33d),
-                                 P_trial_array: wp.array(dtype=wp.float64),
-                                 Q_trial_array: wp.array(dtype=wp.float64),
-                                 tau_trial_array: wp.array(dtype=wp.mat33d),
-                                 delta_lambda_array: wp.array(dtype=wp.float64)):
+                                 real_strain_array: wp.array(dtype=wp.mat33d)):
 
     float64_one = wp.float64(1.0)
     float64_zero = wp.float64(0.0)
@@ -124,7 +120,7 @@ def calculate_stress_residual_DP(new_strain_vector: wp.array(dtype=wp.float64), 
                  shape=(3,3)
                  )
 
-    e_real = return_mapping_DP(trial_strain, lame_lambda, lame_mu, friction_angle, dilation_angle, cohesion, shape_factor, tol, real_strain_array, P_trial_array, Q_trial_array, tau_trial_array, delta_lambda_array)
+    e_real = return_mapping_DP(trial_strain, lame_lambda, lame_mu, friction_angle, dilation_angle, cohesion, shape_factor, tol, real_strain_array)
     # e_real = return_mapping_DP_no_iteration(trial_strain, lame_lambda, lame_mu, friction_angle, dilation_angle, cohesion, shape_factor, tol, real_strain_array)
     # e_real = trial_strain
 

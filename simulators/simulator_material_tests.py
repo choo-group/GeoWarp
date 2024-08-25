@@ -86,21 +86,18 @@ class SimulatorTriaxial:
         self.saved_stress = wp.array(shape=1, dtype=wp.mat33d)
 
 
-        # Intermidiate quantities for local return mapping
+        # Intermidiate quantities for local return mapping. This is important to ensure correct gradients
         self.real_strain_array = wp.zeros(shape=16, dtype=wp.mat33d, requires_grad=True)
-        self.P_trial_array = wp.zeros(shape=16, dtype=wp.float64, requires_grad=True)
-        self.Q_trial_array = wp.zeros(shape=16, dtype=wp.float64, requires_grad=True)
-        self.tau_trial_array = wp.zeros(shape=16, dtype=wp.mat33d, requires_grad=True)
-        self.delta_lambda_array = wp.zeros(shape=16, dtype=wp.float64, requires_grad=True)
 
 
-        # initialize stress and strain (TODO: SEEMS THIS CAUSES THE NAN BUG)
+
+        # initialize stress and strain
         wp.launch(kernel=initialize_elastic_cto,
                   dim=1,
                   inputs=[self.rows_elastic_cto, self.cols_elastic_cto, self.vals_elastic_cto, self.lame_lambda, self.lame_mu])
         wps.bsr_set_from_triplets(self.elastic_cto, self.rows_elastic_cto, self.cols_elastic_cto, self.vals_elastic_cto, prune_numerical_zeros=False)
 
-        print('elastic_cto:', self.elastic_cto)
+        # print('elastic_cto:', self.elastic_cto)
 
         wp.launch(kernel=set_initial_stress,
                   dim=1,
@@ -130,10 +127,7 @@ class SimulatorTriaxial:
             self.vals.zero_() 
 
             self.real_strain_array.zero_()
-            self.P_trial_array.zero_()
-            self.Q_trial_array.zero_()
-            self.tau_trial_array.zero_()
-            self.delta_lambda_array.zero_()
+
 
             tape = wp.Tape()
             with tape:
@@ -145,7 +139,7 @@ class SimulatorTriaxial:
                 elif self.material_name=='Drucker-Prager':
                     wp.launch(kernel=calculate_stress_residual_DP,
                               dim=1,
-                              inputs=[self.new_strain_vector, self.new_elastic_strain_vector, self.lame_lambda, self.lame_mu, self.plasticity_dict['friction_angle'], self.plasticity_dict['dilation_angle'], self.plasticity_dict['cohesion'], self.plasticity_dict['shape_factor'], self.tol, self.target_stress_xx, self.target_stress_yy, self.rhs, self.saved_stress, self.real_strain_array, self.P_trial_array, self.Q_trial_array, self.tau_trial_array, self.delta_lambda_array])
+                              inputs=[self.new_strain_vector, self.new_elastic_strain_vector, self.lame_lambda, self.lame_mu, self.plasticity_dict['friction_angle'], self.plasticity_dict['dilation_angle'], self.plasticity_dict['cohesion'], self.plasticity_dict['shape_factor'], self.tol, self.target_stress_xx, self.target_stress_yy, self.rhs, self.saved_stress, self.real_strain_array])
 
                     # wp.launch(kernel=return_mapping_DP_kernel,
                     #           dim=1,
@@ -182,7 +176,7 @@ class SimulatorTriaxial:
                 # print('rows:', self.rows.numpy())
                 # print('cols:', self.cols.numpy())
                 # Create sparse matrix from a corresponding COOrdinate (a.k.a. triplet) format
-                wps.bsr_set_from_triplets(self.bsr_matrix, self.rows, self.cols, self.vals, prune_numerical_zeros=False) # TODO: why there are NaNs even vals looks correct?
+                wps.bsr_set_from_triplets(self.bsr_matrix, self.rows, self.cols, self.vals, prune_numerical_zeros=False) # if setting prune_numerical_zeros==True (by default), bsr_matrix will contain NaN. See this: https://github.com/NVIDIA/warp/issues/293
 
                 # print('self.bsr_matrix:', self.bsr_matrix)
 
