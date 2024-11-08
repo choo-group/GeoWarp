@@ -4,7 +4,7 @@ sys.path.append('..')
 import warp as wp
 import numpy as np
 
-from material_models.material_utils import return_mapping_J2, return_mapping_DP, return_mapping_DP_no_iteration
+from material_models.material_utils import return_mapping_J2, return_mapping_DP, return_mapping_DP_no_iteration, return_mapping_NorSand
 
 
 @wp.kernel
@@ -131,6 +131,77 @@ def calculate_stress_residual_DP(new_strain_vector: wp.array(dtype=wp.float64), 
     e_trace = wp.trace(e_real)
 
     stress_principal = lame_lambda*e_trace*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*e_real
+
+    saved_stress[0] = stress_principal
+
+    # Here assuming the stress only involves normal components (i.e., no shearing)
+    target_stress = wp.matrix(
+                    target_stress_xx, float64_zero, float64_zero,
+                    float64_zero, target_stress_yy, float64_zero,
+                    float64_zero, float64_zero, stress_principal[2,2],
+                    shape=(3,3)
+                    )
+    stress_residual = target_stress - stress_principal
+
+    # Assemble to rhs
+    wp.atomic_add(rhs, 0, stress_residual[0,0])
+    wp.atomic_add(rhs, 1, stress_residual[1,1])
+
+@wp.kernel
+def calculate_stress_residual_NorSand(new_strain_vector: wp.array(dtype=wp.float64), # Voigt notation
+                                      total_strain_vector: wp.array(dtype=wp.float64),
+                                      new_elastic_strain_vector: wp.array(dtype=wp.float64),
+                                      lame_lambda: wp.float64,
+                                      lame_mu: wp.float64,
+                                      M: wp.float64,
+                                      N: wp.float64,
+                                      saved_pi: wp.array(dtype=wp.float64),
+                                      old_pi: wp.array(dtype=wp.float64),
+                                      tilde_lambda: wp.float64,
+                                      beta: wp.float64,
+                                      v_c0: wp.float64,
+                                      v_0: wp.float64,
+                                      h: wp.float64,
+                                      tol: wp.float64,
+                                      target_stress_xx: wp.float64,
+                                      target_stress_yy: wp.float64,
+                                      rhs: wp.array(dtype=wp.float64),
+                                      saved_stress: wp.array(dtype=wp.mat33d),
+                                      real_strain_array: wp.array(dtype=wp.mat33d),
+                                      pi_array: wp.array(dtype=wp.float64),
+                                      delta_lambda_array: wp.array(dtype=wp.float64),
+                                      saved_local_residual: wp.array(dtype=wp.float64),
+                                      saved_residual: wp.array(dtype=wp.vec4d),
+                                      saved_H: wp.array(dtype=wp.float64)):
+
+    float64_one = wp.float64(1.0)
+    float64_zero = wp.float64(0.0)
+
+    # Here assuming the strain only involves normal components (i.e., no shearing)
+    trial_strain = wp.matrix(
+                 new_strain_vector[0], float64_zero, float64_zero,
+                 float64_zero, new_strain_vector[1], float64_zero,
+                 float64_zero, float64_zero, new_strain_vector[2],
+                 shape=(3,3)
+                 )
+    total_strain = wp.mat33d(
+                   total_strain_vector[0], float64_zero, float64_zero,
+                   float64_zero, total_strain_vector[1], float64_zero,
+                   float64_zero, float64_zero, total_strain_vector[2]
+                   )
+
+    new_J = wp.exp(wp.trace(total_strain))
+
+    e_real = return_mapping_NorSand(trial_strain, total_strain, lame_lambda, lame_mu, M, N, saved_pi, old_pi, tilde_lambda, beta, v_c0, v_0, h, tol, real_strain_array, pi_array, delta_lambda_array, saved_local_residual, saved_residual, saved_H)
+    
+
+    new_elastic_strain_vector[0] = e_real[0,0]
+    new_elastic_strain_vector[1] = e_real[1,1]
+    new_elastic_strain_vector[2] = e_real[2,2]
+
+    e_trace = wp.trace(e_real)
+
+    stress_principal = (lame_lambda*e_trace*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*e_real) / new_J # Cauchy stress
 
     saved_stress[0] = stress_principal
 

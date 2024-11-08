@@ -181,10 +181,6 @@ def return_mapping_DP(trial_strain: wp.mat33d, # trial principal strain
         convergence_flag = wp.float64(0.0)
 
         for local_iter in range(10):
-            # P_trial_iter = P_trial_array[local_iter]
-            # Q_trial_iter = Q_trial_array[local_iter]
-            # tau_trial_iter = tau_trial_array[local_iter]
-            # delta_lambda_iter = delta_lambda_array[local_iter]
 
             grad_g = grad_potential_DP(tau_trial[0,0], tau_trial[1,1], tau_trial[2,2], Q_trial, dilation_angle, cohesion, shape_factor)
             grad_f = grad_yield_DP(tau_trial[0,0], tau_trial[1,1], tau_trial[2,2], Q_trial, friction_angle, cohesion, shape_factor)
@@ -334,32 +330,54 @@ def return_mapping_DP(trial_strain: wp.mat33d, # trial principal strain
     return real_strain
 
 
-
-# TODO: MAKE IT WORK
 @wp.kernel
-def return_mapping_DP_kernel(new_strain_vector: wp.array(dtype=wp.float64), # Voigt notation
-                             lame_lambda: wp.float64,
-                             lame_mu: wp.float64,
-                             friction_angle: wp.float64,
-                             dilation_angle: wp.float64,
-                             cohesion: wp.float64,
-                             shape_factor: wp.float64,
-                             tol: wp.float64,
-                             target_stress_xx: wp.float64,
-                             target_stress_yy: wp.float64,
-                             rhs: wp.array(dtype=wp.float64),
-                             saved_stress: wp.array(dtype=wp.mat33d),
-                             real_strain_array: wp.array(dtype=wp.mat33d),
-                             delta_lambda_array: wp.array(dtype=wp.float64)):
+def initialize_pi_for_NorSand(pi_initial: wp.float64,
+                              saved_pi: wp.array(dtype=wp.float64)):
+    saved_pi[0] = pi_initial
+
+@wp.kernel
+def set_old_pi_to_new_NorSand(saved_pi: wp.array(dtype=wp.float64),
+                              old_pi: wp.array(dtype=wp.float64)):
+    old_pi[0] = saved_pi[0]
+
+
+@wp.func
+def return_mapping_NorSand(trial_strain: wp.mat33d, # trial principal strain
+                           total_strain: wp.mat33d,
+                           lame_lambda: wp.float64,
+                           lame_mu: wp.float64,
+                           M: wp.float64,
+                           N: wp.float64,
+                           saved_pi: wp.array(dtype=wp.float64),
+                           old_pi_array: wp.array(dtype=wp.float64),
+                           tilde_lambda: wp.float64,
+                           beta: wp.float64,
+                           v_c0: wp.float64,
+                           v_0: wp.float64,
+                           h: wp.float64,
+                           tol: wp.float64,
+                           real_strain_array: wp.array(dtype=wp.mat33d),
+                           pi_array: wp.array(dtype=wp.float64),
+                           delta_lambda_array: wp.array(dtype=wp.float64),
+                           saved_local_residual: wp.array(dtype=wp.float64),
+                           saved_residual: wp.array(dtype=wp.vec4d),
+                           saved_H: wp.array(dtype=wp.float64)) -> wp.mat33d:
 
     float64_one = wp.float64(1.0)
     float64_zero = wp.float64(0.0)
-    
-    trial_strain = wp.mat33d(
-                   new_strain_vector[0], float64_zero, float64_zero,
-                   float64_zero, new_strain_vector[1], float64_zero,
-                   float64_zero, float64_zero, new_strain_vector[2]
-                   )
+    K = lame_lambda + wp.float64(2.0)/wp.float64(3.0)*lame_mu
+    alpha_bar = wp.float64(-3.5)/beta
+    xi = wp.float64(0.1) # parameter for the plastic potential function cap. See Eq. (2.76) of Borja, Andrade (2006) for more details
+    old_pi = old_pi_array[0]
+    pi_array[0] = old_pi
+
+    # if saved_pi[0]<wp.float64(-223):
+    #     h = wp.float64(0.0)
+
+    # saved_H[0] = old_pi
+
+
+
 
     real_strain = trial_strain
 
@@ -372,7 +390,16 @@ def return_mapping_DP_kernel(new_strain_vector: wp.array(dtype=wp.float64), # Vo
 
     # Calculate trial stress
     eps_v = wp.trace(trial_strain)
+    eps_s = wp.sqrt(wp.float64(2.0)/wp.float64(9.0) * ((trial_strain[0,0]-trial_strain[1,1])*(trial_strain[0,0]-trial_strain[1,1]) + (trial_strain[1,1]-trial_strain[2,2])*(trial_strain[1,1]-trial_strain[2,2]) + (trial_strain[0,0]-trial_strain[2,2])*(trial_strain[0,0]-trial_strain[2,2])))
     tau_trial = lame_lambda*eps_v*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*trial_strain
+
+    # Get deviatoric direction
+    n_e_trial_deviatoric = wp.vec3d(
+                           trial_strain[0,0] - wp.float64(1.0)/wp.float64(3.0)*eps_v,
+                           trial_strain[1,1] - wp.float64(1.0)/wp.float64(3.0)*eps_v,
+                           trial_strain[2,2] - wp.float64(1.0)/wp.float64(3.0)*eps_v,
+                           )
+    n_e_trial_deviatoric = wp.normalize(n_e_trial_deviatoric)
 
     # Get P and Q invariants
     P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_trial)
@@ -380,133 +407,731 @@ def return_mapping_DP_kernel(new_strain_vector: wp.array(dtype=wp.float64), # Vo
     S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
     Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
 
-    # Check yield
-    yield_y = yield_function_DP(P_trial, Q_trial, friction_angle, dilation_angle, cohesion, shape_factor)
+    # Get new volume
+    eps_v_total = wp.trace(total_strain)
+    new_J = wp.exp(eps_v_total)
+    new_v = new_J * v_0
 
-    if yield_y<wp.float64(1e-10):
-        pass
-    elif P_trial>=wp.float64(0.):
-        pass
-        # TODO
-    else: # Plasticity
-        # Local newton iteration
+    # Check whether eps_v > 0
+    if eps_v > tol:
+        real_strain = wp.mat33d()
+        # saved_H[0] = old_pi
+    else:
+        # Check yield
+        yield_y = yield_function_NorSand(P_trial, Q_trial, M, N, old_pi)
+
+        if yield_y<wp.float64(1e-10):
+            saved_H[0] = old_pi
+            pass # elasticity
+        else:
+            # plasticity
+
+            # Local newton iteration
+            delta_lambda = wp.float64(0.)
+            real_strain_array[0] = trial_strain
+
+            convergence_flag = wp.float64(0.0)
+
+            eta = eta_function_NorSand(M, N, P_trial, old_pi)
+            if False: #eta < xi * M:
+                pass #todo
+            else:
+                # for local_iter in range(15):
+
+                #     eps_real_v = wp.trace(real_strain_array[local_iter])
+                #     eps_real_s = wp.sqrt(wp.float64(2.0)/wp.float64(9.0) * ((real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1]) + (real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2]) + (real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])))
+
+                #     # sub iteration for pi
+                #     psi_i = wp.float64(0.0)
+                #     pi_star = wp.float64(0.0)
+                #     for local_iter_p in range(15):
+                #         psi_i = new_v - v_c0 + tilde_lambda * wp.log(-pi_array[local_iter*15 + local_iter_p])
+                #         pi_star = wp.float64(0.0)
+                #         if wp.abs(N)<tol:
+                #             pi_star = P_trial * wp.exp(alpha_bar * psi_i / M)
+                #         else:
+                #             pi_star = P_trial * wp.pow(wp.float64(1.0) - alpha_bar*psi_i*N/M, (N-wp.float64(1.0)/N))
+
+                #         local_residual = pi_array[local_iter*15 + local_iter_p] - old_pi + h*(pi_array[local_iter*15 + local_iter_p] - pi_star) * delta_lambda
+
+                #         if wp.abs(local_residual)<tol:
+                #             pi_array[local_iter*15 + local_iter_p + 1] = pi_array[local_iter*15 + local_iter_p]
+                #         else:
+                #             local_jacobian = wp.float64(1.0) + h*delta_lambda*(wp.float64(1.0) - (tilde_lambda*alpha_bar*(wp.float64(1.0)-N))/(M-alpha_bar*psi_i*N)*(pi_star/pi_array[local_iter*15 + local_iter_p]))
+                #             pi_array[local_iter*15 + local_iter_p + 1] = pi_array[local_iter*15 + local_iter_p] - local_residual/local_jacobian
+
+                #     new_pi = pi_array[local_iter*15 + 15]
+                    
+                #     # Jacobian, see section 2.6 of Borja, Andrade for details
+                #     c = wp.float64(1.0) + h*delta_lambda*(wp.float64(1.0) - (tilde_lambda*alpha_bar*(wp.float64(1.0)-N))/(M-alpha_bar*psi_i*N) * (pi_star/new_pi))
+                #     D = wp.mat33d(
+                #         K, wp.float64(0.0), wp.float64(0.0),
+                #         wp.float64(0.0), wp.float64(3.0)*lame_mu, wp.float64(0.0),
+                #         wp.float64(1.0)/c * h * delta_lambda * (pi_star/P_trial) * K, wp.float64(0.0), wp.float64(-1.0)/c * h * (new_pi - pi_star)
+                #         )
+
+                #     H = wp.vec3d(
+                #         wp.float64(-1.0)/(wp.float64(1.0)-N) * (M/P_trial) * wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N)),
+                #         wp.float64(0.0),
+                #         wp.float64(1.0)/(wp.float64(1.0)-N) * (M/P_trial) * wp.pow(P_trial/new_pi, wp.float64(1.0)/(wp.float64(1.0)-N))
+                #         )
+
+                #     G = H @ D
+
+                #     dFdP = wp.float64(0.0)
+                #     dFdQ = wp.float64(1.0)
+                #     if wp.abs(N)<1e-8:
+                #         dFdP = M * wp.log(new_pi/P_trial)
+                #     else:
+                #         dFdP = M/N * (wp.float64(1.0) - wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N)))
+
+                #     dFdPi = M * wp.pow(P_trial/new_pi, wp.float64(1.0)/(wp.float64(1.0)-N))
+
+                #     yield_y = yield_function_NorSand(P_trial, Q_trial, M, N, new_pi)
+
+                #     residual = wp.vec3d(
+                #                eps_real_v - eps_v + delta_lambda * beta * dFdP,
+                #                eps_real_s - eps_s + delta_lambda * dFdQ,
+                #                yield_y
+                #                )
+
+                #     jacobian = wp.mat33d(
+                #                wp.float64(1.0)+delta_lambda*beta*G[0], delta_lambda*beta*G[1], beta*(dFdP+delta_lambda*G[2]),
+                #                wp.float64(0.0), wp.float64(1.0), dFdQ,
+                #                D[0,0]*dFdP+D[1,0]*dFdQ+D[2,0]*dFdPi, D[0,1]*dFdP+D[1,1]*dFdQ+D[2,1]*dFdPi, D[2,2]*dFdPi
+                #                )
+                #     xdelta = wp.inverse(jacobian) @ residual
+
+                #     new_eps_real_v = eps_real_v - xdelta[0]
+                #     new_eps_real_s = eps_real_s - xdelta[1]
+                #     delta_lambda -= xdelta[2]
+
+
+                #     # Update strain
+                #     real_strain_array[local_iter+1] = wp.mat33d(
+                #                                       new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[0]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0)), wp.float64(0.0), wp.float64(0.0),
+                #                                       wp.float64(0.0), new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[1]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0)), wp.float64(0.0),
+                #                                       wp.float64(0.0), wp.float64(0.0), new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[2]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0))
+                #                                       )
+
+                #     # Update stress
+                #     eps_v_tmp = wp.trace(real_strain_array[local_iter+1])
+                #     tau_tmp = lame_lambda*eps_v_tmp*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain_array[local_iter+1]
+
+                #     P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_tmp)
+                #     S_trial = tau_tmp - P_trial*wp.identity(n=3, dtype=wp.float64)
+                #     S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
+                #     Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
+
+
+                #     real_strain = wp.mat33d(
+                #                   real_strain_array[local_iter+1][0,0], wp.float64(0.), wp.float64(0.),
+                #                   wp.float64(0.), real_strain_array[local_iter+1][1,1], wp.float64(0.),
+                #                   wp.float64(0.), wp.float64(0.), real_strain_array[local_iter+1][2,2]
+                #                   )
+
+
+
+                # for iter_i in range(225):
+
+                #     local_iter = iter_i/15
+                #     local_iter_p = iter_i%15
+
+                    
+                #     # sub iteration for pi
+                #     psi_i = wp.float64(0.0)
+                #     pi_star = wp.float64(0.0)
+                    
+                #     psi_i = new_v - v_c0 + tilde_lambda * wp.log(-pi_array[local_iter*15 + local_iter_p])
+                #     pi_star = wp.float64(0.0)
+                #     if wp.abs(N)<tol:
+                #         pi_star = P_trial * wp.exp(alpha_bar * psi_i / M)
+                #     else:
+                #         pi_star = P_trial * wp.pow(wp.float64(1.0) - alpha_bar*psi_i*N/M, ((N-wp.float64(1.0))/N))
+
+                #     local_residual = pi_array[local_iter*15 + local_iter_p] - old_pi + h*(pi_array[local_iter*15 + local_iter_p] - pi_star) * delta_lambda_array[local_iter]
+
+                #     if wp.abs(local_residual)<tol:
+                #         pi_array[local_iter*15 + local_iter_p + 1] = pi_array[local_iter*15 + local_iter_p]
+                #     else:
+                #         local_jacobian = wp.float64(1.0) + h*delta_lambda_array[local_iter]*(wp.float64(1.0) - (tilde_lambda*alpha_bar*(wp.float64(1.0)-N))/(M-alpha_bar*psi_i*N)*(pi_star/pi_array[local_iter*15 + local_iter_p]))
+                #         pi_array[local_iter*15 + local_iter_p + 1] = pi_array[local_iter*15 + local_iter_p] - local_residual/local_jacobian
+
+
+                #     if local_iter_p==14:
+                #         eps_real_v = wp.trace(real_strain_array[local_iter])
+                #         eps_real_s = wp.sqrt(wp.float64(2.0)/wp.float64(9.0) * ((real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1]) + (real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2]) + (real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])))
+
+                #         new_pi = pi_array[local_iter*15 + 15]
+                        
+                #         # Jacobian, see section 2.6 of Borja, Andrade for details
+                #         c = wp.float64(1.0) + h*delta_lambda_array[local_iter]*(wp.float64(1.0) - (tilde_lambda*alpha_bar*(wp.float64(1.0)-N))/(M-alpha_bar*psi_i*N) * (pi_star/new_pi))
+                #         D = wp.mat33d(
+                #             K, wp.float64(0.0), wp.float64(0.0),
+                #             wp.float64(0.0), wp.float64(3.0)*lame_mu, wp.float64(0.0),
+                #             wp.float64(1.0)/c * h * delta_lambda_array[local_iter] * (pi_star/P_trial) * K, wp.float64(0.0), wp.float64(-1.0)/c * h * (new_pi - pi_star)
+                #             )
+
+                #         H = wp.vec3d(
+                #             wp.float64(-1.0)/(wp.float64(1.0)-N) * (M/P_trial) * wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N)),
+                #             wp.float64(0.0),
+                #             wp.float64(1.0)/(wp.float64(1.0)-N) * (M/P_trial) * wp.pow(P_trial/new_pi, wp.float64(1.0)/(wp.float64(1.0)-N))
+                #             )
+
+                #         G = H @ D
+
+                #         dFdP = wp.float64(0.0)
+                #         dFdQ = wp.float64(1.0)
+                #         if wp.abs(N)<1e-8:
+                #             dFdP = M * wp.log(new_pi/P_trial)
+                #         else:
+                #             dFdP = M/N * (wp.float64(1.0) - wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N)))
+
+                #         dFdPi = M * wp.pow(P_trial/new_pi, wp.float64(1.0)/(wp.float64(1.0)-N))
+
+                #         yield_y = yield_function_NorSand(P_trial, Q_trial, M, N, new_pi)
+
+                #         residual = wp.vec3d(
+                #                    eps_real_v - eps_v + delta_lambda_array[local_iter] * beta * dFdP,
+                #                    eps_real_s - eps_s + delta_lambda_array[local_iter] * dFdQ,
+                #                    yield_y
+                #                    )
+
+                #         jacobian = wp.mat33d(
+                #                    wp.float64(1.0)+delta_lambda_array[local_iter]*beta*G[0], delta_lambda_array[local_iter]*beta*G[1], beta*(dFdP+delta_lambda_array[local_iter]*G[2]),
+                #                    wp.float64(0.0), wp.float64(1.0), dFdQ,
+                #                    D[0,0]*dFdP+D[1,0]*dFdQ+D[2,0]*dFdPi, D[0,1]*dFdP+D[1,1]*dFdQ+D[2,1]*dFdPi, D[2,2]*dFdPi
+                #                    )
+                #         xdelta = wp.inverse(jacobian) @ residual
+
+                #         new_eps_real_v = eps_real_v - xdelta[0]
+                #         new_eps_real_s = eps_real_s - xdelta[1]
+                #         delta_lambda_array[local_iter+1] = delta_lambda_array[local_iter] - xdelta[2]
+
+
+                #         # Update strain
+                #         real_strain_array[local_iter+1] = wp.mat33d(
+                #                                           new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[0]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0)), wp.float64(0.0), wp.float64(0.0),
+                #                                           wp.float64(0.0), new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[1]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0)), wp.float64(0.0),
+                #                                           wp.float64(0.0), wp.float64(0.0), new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[2]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0))
+                #                                           )
+
+                #         # Update stress
+                #         eps_v_tmp = wp.trace(real_strain_array[local_iter+1])
+                #         tau_tmp = lame_lambda*eps_v_tmp*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain_array[local_iter+1]
+
+                #         P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_tmp)
+                #         S_trial = tau_tmp - P_trial*wp.identity(n=3, dtype=wp.float64)
+                #         S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
+                #         Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
+
+
+                #         real_strain = wp.mat33d(
+                #                       real_strain_array[local_iter+1][0,0], wp.float64(0.), wp.float64(0.),
+                #                       wp.float64(0.), real_strain_array[local_iter+1][1,1], wp.float64(0.),
+                #                       wp.float64(0.), wp.float64(0.), real_strain_array[local_iter+1][2,2]
+                #                       )
+
+
+
+
+
+
+
+                # # using delta_lambda
+                # for iter_i in range(225):
+
+                #     local_iter = iter_i/15
+                #     local_iter_p = iter_i%15
+
+                    
+                #     # sub iteration for pi
+                #     psi_i = wp.float64(0.0)
+                #     pi_star = wp.float64(0.0)
+                    
+                #     psi_i = new_v - v_c0 + tilde_lambda * wp.log(-pi_array[local_iter*15 + local_iter_p])
+                #     pi_star = wp.float64(0.0)
+                #     if wp.abs(N)<tol:
+                #         pi_star = P_trial * wp.exp(alpha_bar * psi_i / M)
+                #     else:
+                #         pi_star = P_trial * wp.pow(wp.float64(1.0) - alpha_bar*psi_i*N/M, ((N-wp.float64(1.0))/N))
+
+                #     local_residual = pi_array[local_iter*15 + local_iter_p] - old_pi + h*(pi_array[local_iter*15 + local_iter_p] - pi_star) * delta_lambda
+
+                #     if wp.abs(local_residual)<tol:
+                #         pi_array[local_iter*15 + local_iter_p + 1] = pi_array[local_iter*15 + local_iter_p]
+                #     else:
+                #         local_jacobian = wp.float64(1.0) + h*delta_lambda*(wp.float64(1.0) - (tilde_lambda*alpha_bar*(wp.float64(1.0)-N))/(M-alpha_bar*psi_i*N)*(pi_star/pi_array[local_iter*15 + local_iter_p]))
+                #         pi_array[local_iter*15 + local_iter_p + 1] = pi_array[local_iter*15 + local_iter_p] - local_residual/local_jacobian
+
+
+                #     if local_iter_p==14:
+                #         eps_real_v = wp.trace(real_strain_array[local_iter])
+                #         eps_real_s = wp.sqrt(wp.float64(2.0)/wp.float64(9.0) * ((real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1]) + (real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2]) + (real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])))
+
+                #         new_pi = pi_array[local_iter*15 + 15]
+                        
+                #         # Jacobian, see section 2.6 of Borja, Andrade for details
+                #         c = wp.float64(1.0) + h*delta_lambda*(wp.float64(1.0) - (tilde_lambda*alpha_bar*(wp.float64(1.0)-N))/(M-alpha_bar*psi_i*N) * (pi_star/new_pi))
+                #         D = wp.mat33d(
+                #             K, wp.float64(0.0), wp.float64(0.0),
+                #             wp.float64(0.0), wp.float64(3.0)*lame_mu, wp.float64(0.0),
+                #             wp.float64(1.0)/c * h * delta_lambda * (pi_star/P_trial) * K, wp.float64(0.0), wp.float64(-1.0)/c * h * (new_pi - pi_star)
+                #             )
+
+                #         H = wp.vec3d(
+                #             wp.float64(-1.0)/(wp.float64(1.0)-N) * (M/P_trial) * wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N)),
+                #             wp.float64(0.0),
+                #             wp.float64(1.0)/(wp.float64(1.0)-N) * (M/P_trial) * wp.pow(P_trial/new_pi, wp.float64(1.0)/(wp.float64(1.0)-N))
+                #             )
+
+                #         G = H @ D
+
+                #         dFdP = wp.float64(0.0)
+                #         dFdQ = wp.float64(1.0)
+                #         if wp.abs(N)<1e-8:
+                #             dFdP = M * wp.log(new_pi/P_trial)
+                #         else:
+                #             dFdP = M/N * (wp.float64(1.0) - wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N)))
+
+                #         dFdPi = M * wp.pow(P_trial/new_pi, wp.float64(1.0)/(wp.float64(1.0)-N))
+
+                #         yield_y = yield_function_NorSand(P_trial, Q_trial, M, N, new_pi)
+
+                #         residual = wp.vec3d(
+                #                    eps_real_v - eps_v + delta_lambda * beta * dFdP,
+                #                    eps_real_s - eps_s + delta_lambda * dFdQ,
+                #                    yield_y
+                #                    )
+
+                #         jacobian = wp.mat33d(
+                #                    wp.float64(1.0)+delta_lambda*beta*G[0], delta_lambda*beta*G[1], beta*(dFdP+delta_lambda*G[2]),
+                #                    wp.float64(0.0), wp.float64(1.0), dFdQ,
+                #                    D[0,0]*dFdP+D[1,0]*dFdQ+D[2,0]*dFdPi, D[0,1]*dFdP+D[1,1]*dFdQ+D[2,1]*dFdPi, D[2,2]*dFdPi
+                #                    )
+                #         xdelta = wp.inverse(jacobian) @ residual
+
+                #         new_eps_real_v = eps_real_v
+                #         new_eps_real_s = eps_real_s
+                #         residual_norm = wp.sqrt(wp.dot(residual, residual))
+                #         if residual_norm>1e-8:
+                #             new_eps_real_v = eps_real_v - xdelta[0]
+                #             new_eps_real_s = eps_real_s - xdelta[1]
+                #             delta_lambda = delta_lambda - xdelta[2]
+
+
+                #         # Update strain
+                #         real_strain_array[local_iter+1] = wp.mat33d(
+                #                                           new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[0]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0)), wp.float64(0.0), wp.float64(0.0),
+                #                                           wp.float64(0.0), new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[1]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0)), wp.float64(0.0),
+                #                                           wp.float64(0.0), wp.float64(0.0), new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[2]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0))
+                #                                           )
+
+                #         # Update stress
+                #         eps_v_tmp = wp.trace(real_strain_array[local_iter+1])
+                #         tau_tmp = lame_lambda*eps_v_tmp*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain_array[local_iter+1]
+
+                #         P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_tmp)
+                #         S_trial = tau_tmp - P_trial*wp.identity(n=3, dtype=wp.float64)
+                #         S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
+                #         Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
+
+
+                #         real_strain = wp.mat33d(
+                #                       real_strain_array[local_iter+1][0,0], wp.float64(0.), wp.float64(0.),
+                #                       wp.float64(0.), real_strain_array[local_iter+1][1,1], wp.float64(0.),
+                #                       wp.float64(0.), wp.float64(0.), real_strain_array[local_iter+1][2,2]
+                #                       )
+
+
+                #         if iter_i==224:
+                #             saved_local_residual[0] = local_residual
+                #             saved_residual[0] = residual
+
+
+
+
+
+                # saved_H[0] = old_pi
+
+                # Treat pi as an independent variable
+                for local_iter in range(15):
+                    eps_real_v = wp.trace(real_strain_array[local_iter])
+                    eps_real_s = wp.sqrt(wp.float64(2.0)/wp.float64(9.0) * ((real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1]) + (real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2]) + (real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])))
+                    new_pi = pi_array[local_iter]
+
+                    dFdP = wp.float64(0.0)
+                    dFdQ = wp.float64(1.0)
+                    if wp.abs(N)<1e-8:
+                        dFdP = M * wp.log(new_pi/P_trial)
+                    else:
+                        dFdP = M/N * (wp.float64(1.0) - wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N)))
+
+
+                    # residual
+                    psi_i = new_v - v_c0 + tilde_lambda * wp.log(-new_pi)
+                    pi_star = wp.float64(0.0)
+                    if wp.abs(N)<tol:
+                        pi_star = P_trial * wp.exp(alpha_bar * psi_i / M)
+                    else:
+                        pi_star = P_trial * wp.pow(wp.float64(1.0) - alpha_bar*psi_i*N/M, ((N-wp.float64(1.0))/N))
+
+                    yield_y = yield_function_NorSand(P_trial, Q_trial, M, N, new_pi)
+                    H = new_pi - old_pi + h*(new_pi-pi_star)*delta_lambda
+
+                    residual = wp.vec4d(
+                               eps_real_v - eps_v + delta_lambda * beta * dFdP,
+                               eps_real_s - eps_s + delta_lambda * dFdQ,
+                               yield_y,
+                               H
+                               )
+
+                    # local jacobian
+                    dEtadP = dEtadP_function_NorSand(M, N, P_trial, new_pi)
+                    dEtadPi = dEtadPi_function_NorSand(M, N, P_trial, new_pi)
+                    d2F_dPdepsv = dEtadP * K
+                    d2F_dPdPi = dEtadPi
+
+                    eta = eta_function_NorSand(M, N, P_trial, new_pi)
+                    dFdepsv = (dEtadP*P_trial + eta) * K
+                    dFdepss = wp.float64(3.0) * lame_mu
+                    dFdPi = P_trial * dEtadPi
+
+                    dPistar_dP = dPistar_dP_function_NorSand(M, N, alpha_bar, psi_i)
+                    dPsii_dPi = tilde_lambda/new_pi
+                    dPistar_dPi = dPistar_dPi_function_NorSand(M, N, alpha_bar, P_trial, psi_i, dPsii_dPi)
+                    dHdepsv = -h*delta_lambda*dPistar_dP*K
+                    dHdPi = wp.float64(1.0) + h*delta_lambda*(wp.float64(1.0) - dPistar_dPi)
+
+
+                    jacobian = wp.mat44d(
+                               wp.float64(1.0)+delta_lambda*beta*d2F_dPdepsv, wp.float64(0.0), beta*dFdP, delta_lambda*beta*d2F_dPdPi,
+                               wp.float64(0.0), wp.float64(1.0), dFdQ, wp.float64(0.0),
+                               dFdepsv, dFdepss, wp.float64(0.0), dFdPi,
+                               dHdepsv, wp.float64(0.0), h*(new_pi-pi_star), dHdPi
+                               )
+
+                    xdelta = wp.inverse(jacobian) @ residual
+
+                    new_eps_real_v = eps_real_v
+                    new_eps_real_s = eps_real_s
+                    residual_norm = wp.sqrt(wp.dot(residual, residual))
+
+                    new_eps_real_v = eps_real_v - xdelta[0]
+                    new_eps_real_s = eps_real_s - xdelta[1]
+                    delta_lambda = delta_lambda - xdelta[2]
+                    pi_array[local_iter+1] = pi_array[local_iter] - xdelta[3]
+
+                    # Update strain
+                    real_strain_array[local_iter+1] = wp.mat33d(
+                                                      new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[0]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0)), wp.float64(0.0), wp.float64(0.0),
+                                                      wp.float64(0.0), new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[1]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0)), wp.float64(0.0),
+                                                      wp.float64(0.0), wp.float64(0.0), new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[2]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0))
+                                                      )
+
+                    # Update stress
+                    eps_v_tmp = wp.trace(real_strain_array[local_iter+1])
+                    tau_tmp = lame_lambda*eps_v_tmp*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain_array[local_iter+1]
+
+                    P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_tmp)
+                    S_trial = tau_tmp - P_trial*wp.identity(n=3, dtype=wp.float64)
+                    S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
+                    Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
+
+
+                    real_strain = wp.mat33d(
+                              real_strain_array[local_iter+1][0,0], wp.float64(0.), wp.float64(0.),
+                              wp.float64(0.), real_strain_array[local_iter+1][1,1], wp.float64(0.),
+                              wp.float64(0.), wp.float64(0.), real_strain_array[local_iter+1][2,2]
+                              )
+
+
+                    saved_residual[local_iter] = residual
+
+                    # Hardening modulus
+                    # saved_H[0] = old_pi #new_pi - pi_star==0 #M*h*wp.pow(P_trial/new_pi, wp.float64(1.0)/(wp.float64(1.0)-N))*(new_pi - pi_star)==0
+
+
+
+
+
+
+                # # no iteration on pi
+                # new_pi = saved_pi[0]
+                # for local_iter in range(15):
+
+                    
+                #     # sub iteration for pi
+                #     psi_i = wp.float64(0.0)
+                #     pi_star = wp.float64(0.0)
+                    
+                #     psi_i = new_v - v_c0 + tilde_lambda * wp.log(-new_pi)
+                #     pi_star = wp.float64(0.0)
+                #     if wp.abs(N)<tol:
+                #         pi_star = P_trial * wp.exp(alpha_bar * psi_i / M)
+                #     else:
+                #         pi_star = P_trial * wp.pow(wp.float64(1.0) - alpha_bar*psi_i*N/M, (N-wp.float64(1.0)/N))
+
+
+                #     eps_real_v = wp.trace(real_strain_array[local_iter])
+                #     eps_real_s = wp.sqrt(wp.float64(2.0)/wp.float64(9.0) * ((real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1]) + (real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2]) + (real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])))
+
+                    
+                #     # Jacobian, see section 2.6 of Borja, Andrade for details
+                #     c = wp.float64(1.0) + h*delta_lambda*(wp.float64(1.0) - (tilde_lambda*alpha_bar*(wp.float64(1.0)-N))/(M-alpha_bar*psi_i*N) * (pi_star/new_pi))
+                #     D = wp.mat33d(
+                #         K, wp.float64(0.0), wp.float64(0.0),
+                #         wp.float64(0.0), wp.float64(3.0)*lame_mu, wp.float64(0.0),
+                #         wp.float64(1.0)/c * h * delta_lambda * (pi_star/P_trial) * K, wp.float64(0.0), wp.float64(-1.0)/c * h * (new_pi - pi_star)
+                #         )
+
+                #     H = wp.vec3d(
+                #         wp.float64(-1.0)/(wp.float64(1.0)-N) * (M/P_trial) * wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N)),
+                #         wp.float64(0.0),
+                #         wp.float64(1.0)/(wp.float64(1.0)-N) * (M/P_trial) * wp.pow(P_trial/new_pi, wp.float64(1.0)/(wp.float64(1.0)-N))
+                #         )
+
+                #     G = H @ D
+
+                #     dFdP = wp.float64(0.0)
+                #     dFdQ = wp.float64(1.0)
+                #     if wp.abs(N)<1e-8:
+                #         dFdP = M * wp.log(new_pi/P_trial)
+                #     else:
+                #         dFdP = M/N * (wp.float64(1.0) - wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N)))
+
+                #     dFdPi = M * wp.pow(P_trial/new_pi, wp.float64(1.0)/(wp.float64(1.0)-N))
+
+                #     yield_y = yield_function_NorSand(P_trial, Q_trial, M, N, new_pi)
+
+                #     residual = wp.vec3d(
+                #                eps_real_v - eps_v + delta_lambda * beta * dFdP,
+                #                eps_real_s - eps_s + delta_lambda * dFdQ,
+                #                yield_y
+                #                )
+
+                #     jacobian = wp.mat33d(
+                #                wp.float64(1.0)+delta_lambda*beta*G[0], delta_lambda*beta*G[1], beta*(dFdP+delta_lambda*G[2]),
+                #                wp.float64(0.0), wp.float64(1.0), dFdQ,
+                #                D[0,0]*dFdP+D[1,0]*dFdQ+D[2,0]*dFdPi, D[0,1]*dFdP+D[1,1]*dFdQ+D[2,1]*dFdPi, D[2,2]*dFdPi
+                #                )
+                #     xdelta = wp.inverse(jacobian) @ residual
+
+                #     new_eps_real_v = eps_real_v - xdelta[0]
+                #     new_eps_real_s = eps_real_s - xdelta[1]
+                #     delta_lambda -= xdelta[2]
+
+
+                #     # Update strain
+                #     real_strain_array[local_iter+1] = wp.mat33d(
+                #                                       new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[0]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0)), wp.float64(0.0), wp.float64(0.0),
+                #                                       wp.float64(0.0), new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[1]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0)), wp.float64(0.0),
+                #                                       wp.float64(0.0), wp.float64(0.0), new_eps_real_v/wp.float64(3.0)+new_eps_real_s*n_e_trial_deviatoric[2]*wp.sqrt(wp.float64(3.0)/wp.float64(2.0))
+                #                                       )
+
+                #     # Update stress
+                #     eps_v_tmp = wp.trace(real_strain_array[local_iter+1])
+                #     tau_tmp = lame_lambda*eps_v_tmp*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain_array[local_iter+1]
+
+                #     P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_tmp)
+                #     S_trial = tau_tmp - P_trial*wp.identity(n=3, dtype=wp.float64)
+                #     S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
+                #     Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
+
+
+                #     real_strain = wp.mat33d(
+                #                   real_strain_array[local_iter+1][0,0], wp.float64(0.), wp.float64(0.),
+                #                   wp.float64(0.), real_strain_array[local_iter+1][1,1], wp.float64(0.),
+                #                   wp.float64(0.), wp.float64(0.), real_strain_array[local_iter+1][2,2]
+                #                   )
+
+
+
+            # saved_pi[0] = pi_array[14*15 + 14+1]
+
+            saved_pi[0] = pi_array[15]
+            # saved_H[0] = old_pi
+
+    return real_strain
+
+
+
+
+
+
+
+# # TODO: MAKE IT WORK
+# @wp.kernel
+# def return_mapping_DP_kernel(new_strain_vector: wp.array(dtype=wp.float64), # Voigt notation
+#                              lame_lambda: wp.float64,
+#                              lame_mu: wp.float64,
+#                              friction_angle: wp.float64,
+#                              dilation_angle: wp.float64,
+#                              cohesion: wp.float64,
+#                              shape_factor: wp.float64,
+#                              tol: wp.float64,
+#                              target_stress_xx: wp.float64,
+#                              target_stress_yy: wp.float64,
+#                              rhs: wp.array(dtype=wp.float64),
+#                              saved_stress: wp.array(dtype=wp.mat33d),
+#                              real_strain_array: wp.array(dtype=wp.mat33d),
+#                              delta_lambda_array: wp.array(dtype=wp.float64)):
+
+#     float64_one = wp.float64(1.0)
+#     float64_zero = wp.float64(0.0)
+    
+#     trial_strain = wp.mat33d(
+#                    new_strain_vector[0], float64_zero, float64_zero,
+#                    float64_zero, new_strain_vector[1], float64_zero,
+#                    float64_zero, float64_zero, new_strain_vector[2]
+#                    )
+
+#     real_strain = trial_strain
+
+#     # Construct elastic_a
+#     elastic_a_tmp1 = lame_lambda * wp.mat33d(wp.float64(1.), wp.float64(1.), wp.float64(1.),
+#                                             wp.float64(1.), wp.float64(1.), wp.float64(1.),
+#                                             wp.float64(1.), wp.float64(1.), wp.float64(1.))
+#     elastic_a_tmp2 = wp.float64(2.) * lame_mu * wp.identity(n=3, dtype=wp.float64)
+#     elastic_a = elastic_a_tmp1 + elastic_a_tmp2
+
+#     # Calculate trial stress
+#     eps_v = wp.trace(trial_strain)
+#     tau_trial = lame_lambda*eps_v*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*trial_strain
+
+#     # Get P and Q invariants
+#     P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_trial)
+#     S_trial = tau_trial - P_trial*wp.identity(n=3, dtype=wp.float64)
+#     S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
+#     Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
+
+#     # Check yield
+#     yield_y = yield_function_DP(P_trial, Q_trial, friction_angle, dilation_angle, cohesion, shape_factor)
+
+#     if yield_y<wp.float64(1e-10):
+#         pass
+#     elif P_trial>=wp.float64(0.):
+#         pass
+#         # TODO
+#     else: # Plasticity
+#         # Local newton iteration
 
         
-        # tau_trial_array[0] = tau_trial
-        # P_trial_array[0] = P_trial
-        # Q_trial_array[0] = Q_trial
-        # S_trial_array[0] = S_trial
-        real_strain_array[0] = trial_strain
-        delta_lambda_array[0] = wp.float64(0.)
+#         # tau_trial_array[0] = tau_trial
+#         # P_trial_array[0] = P_trial
+#         # Q_trial_array[0] = Q_trial
+#         # S_trial_array[0] = S_trial
+#         real_strain_array[0] = trial_strain
+#         delta_lambda_array[0] = wp.float64(0.)
 
-        # delta_lambda = wp.float64(0.) # Local iter converges weel, but seems this will affect the outer gradient calculation
-        test = wp.mat33d()
+#         # delta_lambda = wp.float64(0.) # Local iter converges weel, but seems this will affect the outer gradient calculation
+#         test = wp.mat33d()
 
-        for local_iter in range(1):
-            grad_g = grad_potential_DP(tau_trial, Q_trial, dilation_angle, cohesion, shape_factor)
-            grad_f = grad_yield_DP(tau_trial, Q_trial, friction_angle, cohesion, shape_factor)
-            grad_f_eps = grad_yield_epsilon_DP(elastic_a, grad_f)
+#         for local_iter in range(1):
+#             grad_g = grad_potential_DP(tau_trial, Q_trial, dilation_angle, cohesion, shape_factor)
+#             grad_f = grad_yield_DP(tau_trial, Q_trial, friction_angle, cohesion, shape_factor)
+#             grad_f_eps = grad_yield_epsilon_DP(elastic_a, grad_f)
 
-            hess_g = hess_potential_DP(S_trial, Q_trial, dilation_angle, cohesion, shape_factor)
-            hess_g_eps = hess_potential_epsilon_DP(hess_g, elastic_a) 
+#             hess_g = hess_potential_DP(S_trial, Q_trial, dilation_angle, cohesion, shape_factor)
+#             hess_g_eps = hess_potential_epsilon_DP(hess_g, elastic_a) 
 
-            yield_y_iter = yield_function_DP(P_trial, Q_trial, friction_angle, dilation_angle, cohesion, shape_factor)
+#             yield_y_iter = yield_function_DP(P_trial, Q_trial, friction_angle, dilation_angle, cohesion, shape_factor)
 
-            residual = wp.vec4d(
-                       real_strain_array[local_iter][0,0] - trial_strain[0,0] + delta_lambda_array[local_iter]*grad_g[0],
-                       real_strain_array[local_iter][1,1] - trial_strain[1,1] + delta_lambda_array[local_iter]*grad_g[1],
-                       real_strain_array[local_iter][2,2] - trial_strain[2,2] + delta_lambda_array[local_iter]*grad_g[2],
-                       yield_y_iter
-                       )
+#             residual = wp.vec4d(
+#                        real_strain_array[local_iter][0,0] - trial_strain[0,0] + delta_lambda_array[local_iter]*grad_g[0],
+#                        real_strain_array[local_iter][1,1] - trial_strain[1,1] + delta_lambda_array[local_iter]*grad_g[1],
+#                        real_strain_array[local_iter][2,2] - trial_strain[2,2] + delta_lambda_array[local_iter]*grad_g[2],
+#                        yield_y_iter
+#                        )
 
-            residual_norm = wp.sqrt(residual[0]*residual[0] + residual[1]*residual[1] + residual[2]*residual[2] + residual[3]*residual[3])
+#             residual_norm = wp.sqrt(residual[0]*residual[0] + residual[1]*residual[1] + residual[2]*residual[2] + residual[3]*residual[3])
 
-            # if residual_norm<tol:
-            #     break
-
-
-
-            # Assemble Jacobian
-            jacobian = wp.mat44d(
-                       wp.float64(1.) + delta_lambda_array[local_iter]*hess_g_eps[0,0], delta_lambda_array[local_iter]*hess_g_eps[0,1], delta_lambda_array[local_iter]*hess_g_eps[0,2], grad_g[0],
-                       delta_lambda_array[local_iter]*hess_g_eps[1,0], wp.float64(1.) + delta_lambda_array[local_iter]*hess_g_eps[1,1], delta_lambda_array[local_iter]*hess_g_eps[1,2], grad_g[1],
-                       delta_lambda_array[local_iter]*hess_g_eps[2,0], delta_lambda_array[local_iter]*hess_g_eps[2,1], wp.float64(1.) + delta_lambda_array[local_iter]*hess_g_eps[2,2], grad_g[2],
-                       grad_f_eps[0], grad_f_eps[1], grad_f_eps[2], wp.float64(0.)
-                       )
-            xdelta = wp.inverse(jacobian) @ residual
-
-        
+#             # if residual_norm<tol:
+#             #     break
 
 
-            # Update variables
-            delta_strain = wp.mat33d(
-                           -xdelta[0], wp.float64(0.), wp.float64(0.),
-                           wp.float64(0.), -xdelta[1], wp.float64(0.),
-                           wp.float64(0.), wp.float64(0.), -xdelta[2]
-                           )
-            real_strain_array[local_iter+1] = real_strain_array[local_iter] + delta_strain
 
-            delta_lambda_array[local_iter+1] = delta_lambda_array[local_iter] - xdelta[3]
-
-            # NO GLOBAL ARRAY
-            # real_strain[0,0] = real_strain[0,0] - xdelta[0] # NOTE: THIS DOES NOT UPDATE THE MATRIX
-            # real_strain[1,1] = real_strain[1,1] - xdelta[1]
-            # real_strain[2,2] = real_strain[2,2] - xdelta[2]
-
-            # delta_strain = wp.mat33d(
-            #                -xdelta[0], wp.float64(0.), wp.float64(0.),
-            #                wp.float64(0.), -xdelta[1], wp.float64(0.),
-            #                wp.float64(0.), wp.float64(0.), -xdelta[2]
-            #                )
-            # real_strain = real_strain + delta_strain
-
-            # delta_lambda = delta_lambda - xdelta[3]
-
-            tmp = wp.mat33d(wp.float64(1.), wp.float64(0.), wp.float64(0.),
-                            wp.float64(0.), wp.float64(0.), wp.float64(0.),
-                            wp.float64(0.), wp.float64(0.), wp.float64(0.))
-            test = test + tmp
-
-
-            # print(local_iter)
-
-            # # Update stress
-            # eps_v_iter = wp.trace(real_strain_array[local_iter+1])
-            # tau_trial = lame_lambda*eps_v_iter*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain_array[local_iter+1]
-
-            # P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_trial)
-            # S_trial = tau_trial - P_trial*wp.identity(n=3, dtype=wp.float64)
-            # S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
-            # Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
-
-            # real_strain = wp.mat33d(
-            #               real_strain_array[local_iter+1][0,0], wp.float64(0.), wp.float64(0.),
-            #               wp.float64(0.), real_strain_array[local_iter+1][1,1], wp.float64(0.),
-            #               wp.float64(0.), wp.float64(0.), real_strain_array[local_iter+1][2,2]
-            #               )
-
-            real_strain = real_strain_array[1]
+#             # Assemble Jacobian
+#             jacobian = wp.mat44d(
+#                        wp.float64(1.) + delta_lambda_array[local_iter]*hess_g_eps[0,0], delta_lambda_array[local_iter]*hess_g_eps[0,1], delta_lambda_array[local_iter]*hess_g_eps[0,2], grad_g[0],
+#                        delta_lambda_array[local_iter]*hess_g_eps[1,0], wp.float64(1.) + delta_lambda_array[local_iter]*hess_g_eps[1,1], delta_lambda_array[local_iter]*hess_g_eps[1,2], grad_g[1],
+#                        delta_lambda_array[local_iter]*hess_g_eps[2,0], delta_lambda_array[local_iter]*hess_g_eps[2,1], wp.float64(1.) + delta_lambda_array[local_iter]*hess_g_eps[2,2], grad_g[2],
+#                        grad_f_eps[0], grad_f_eps[1], grad_f_eps[2], wp.float64(0.)
+#                        )
+#             xdelta = wp.inverse(jacobian) @ residual
 
         
-    # After return mapping
-    e_trace = wp.trace(real_strain)
 
-    stress_principal = lame_lambda*e_trace*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain
 
-    saved_stress[0] = stress_principal
+#             # Update variables
+#             delta_strain = wp.mat33d(
+#                            -xdelta[0], wp.float64(0.), wp.float64(0.),
+#                            wp.float64(0.), -xdelta[1], wp.float64(0.),
+#                            wp.float64(0.), wp.float64(0.), -xdelta[2]
+#                            )
+#             real_strain_array[local_iter+1] = real_strain_array[local_iter] + delta_strain
 
-    # Here assuming the stress only involves normal components (i.e., no shearing)
-    target_stress = wp.matrix(
-                    target_stress_xx, float64_zero, float64_zero,
-                    float64_zero, target_stress_yy, float64_zero,
-                    float64_zero, float64_zero, stress_principal[2,2],
-                    shape=(3,3)
-                    )
-    stress_residual = target_stress - stress_principal
+#             delta_lambda_array[local_iter+1] = delta_lambda_array[local_iter] - xdelta[3]
 
-    # Assemble to rhs
-    wp.atomic_add(rhs, 0, stress_residual[0,0])
-    wp.atomic_add(rhs, 1, stress_residual[1,1])
+#             # NO GLOBAL ARRAY
+#             # real_strain[0,0] = real_strain[0,0] - xdelta[0] # NOTE: THIS DOES NOT UPDATE THE MATRIX
+#             # real_strain[1,1] = real_strain[1,1] - xdelta[1]
+#             # real_strain[2,2] = real_strain[2,2] - xdelta[2]
+
+#             # delta_strain = wp.mat33d(
+#             #                -xdelta[0], wp.float64(0.), wp.float64(0.),
+#             #                wp.float64(0.), -xdelta[1], wp.float64(0.),
+#             #                wp.float64(0.), wp.float64(0.), -xdelta[2]
+#             #                )
+#             # real_strain = real_strain + delta_strain
+
+#             # delta_lambda = delta_lambda - xdelta[3]
+
+#             tmp = wp.mat33d(wp.float64(1.), wp.float64(0.), wp.float64(0.),
+#                             wp.float64(0.), wp.float64(0.), wp.float64(0.),
+#                             wp.float64(0.), wp.float64(0.), wp.float64(0.))
+#             test = test + tmp
+
+
+#             # print(local_iter)
+
+#             # # Update stress
+#             # eps_v_iter = wp.trace(real_strain_array[local_iter+1])
+#             # tau_trial = lame_lambda*eps_v_iter*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain_array[local_iter+1]
+
+#             # P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_trial)
+#             # S_trial = tau_trial - P_trial*wp.identity(n=3, dtype=wp.float64)
+#             # S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
+#             # Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
+
+#             # real_strain = wp.mat33d(
+#             #               real_strain_array[local_iter+1][0,0], wp.float64(0.), wp.float64(0.),
+#             #               wp.float64(0.), real_strain_array[local_iter+1][1,1], wp.float64(0.),
+#             #               wp.float64(0.), wp.float64(0.), real_strain_array[local_iter+1][2,2]
+#             #               )
+
+#             real_strain = real_strain_array[1]
+
+        
+#     # After return mapping
+#     e_trace = wp.trace(real_strain)
+
+#     stress_principal = lame_lambda*e_trace*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*real_strain
+
+#     saved_stress[0] = stress_principal
+
+#     # Here assuming the stress only involves normal components (i.e., no shearing)
+#     target_stress = wp.matrix(
+#                     target_stress_xx, float64_zero, float64_zero,
+#                     float64_zero, target_stress_yy, float64_zero,
+#                     float64_zero, float64_zero, stress_principal[2,2],
+#                     shape=(3,3)
+#                     )
+#     stress_residual = target_stress - stress_principal
+
+#     # Assemble to rhs
+#     wp.atomic_add(rhs, 0, stress_residual[0,0])
+#     wp.atomic_add(rhs, 1, stress_residual[1,1])
 
 
 
@@ -706,5 +1331,82 @@ def hess_potential_epsilon_DP(hess_g: wp.mat33d,
     return hess_g_eps
 
 
+@wp.func
+def yield_function_NorSand(P_trial: wp.float64, 
+                           Q_trial: wp.float64, 
+                           M: wp.float64, 
+                           N: wp.float64, 
+                           pi_variable: wp.float64):
+    
+    eta = eta_function_NorSand(M, N, P_trial, pi_variable)
 
+    return Q_trial + eta * P_trial
+
+
+@wp.func
+def eta_function_NorSand(M: wp.float64, 
+                         N: wp.float64,
+                         P_trial: wp.float64,
+                         pi_variable: wp.float64):
+    eta = wp.float64(0.0)
+    if wp.abs(N) < 1e-8:
+        eta = M * (wp.float64(1.0) + wp.log(pi_variable/P_trial))
+    else:
+        eta = (M/N) * (wp.float64(1.0) - (wp.float64(1.0)-N)*wp.pow(P_trial/pi_variable, N/(wp.float64(1.0)-N)))
+
+    return eta
+
+@ wp.func
+def dEtadP_function_NorSand(M: wp.float64,
+                            N: wp.float64,
+                            P_trial: wp.float64,
+                            pi_variable: wp.float64):
+    dEtadP = wp.float64(0.0)
+    if wp.abs(N) < 1e-8:
+        dEtadP = M * wp.float64(-1.0)/P_trial
+    else:
+        dEtadP = M * (wp.float64(-1.0)*wp.pow(P_trial/pi_variable, (wp.float64(2.0)*N-wp.float64(1.0))/(wp.float64(1.0)-N))/pi_variable)
+
+    return dEtadP
+
+@wp.func
+def dEtadPi_function_NorSand(M: wp.float64,
+                             N: wp.float64,
+                             P_trial: wp.float64,
+                             pi_variable: wp.float64):
+    dEtadPi = wp.float64(0.0)
+    if wp.abs(N) < 1e-8:
+        dEtadPi = M/pi_variable
+    else:
+        dEtadPi = M * (wp.float64(-1.0)*wp.pow(P_trial/pi_variable, (wp.float64(2.0)*N-wp.float64(1.0))/(wp.float64(1.0)-N)) * (-P_trial)/wp.pow(pi_variable, wp.float64(2.0)))
+
+    return dEtadPi
+
+@wp.func
+def dPistar_dP_function_NorSand(M: wp.float64, 
+                                N: wp.float64, 
+                                alpha_bar: wp.float64, 
+                                psi_i: wp.float64):
+    dPistar_dP = wp.float64(0.0)
+    if wp.abs(N) < 1e-8:
+        dPistar_dP = wp.exp(alpha_bar*psi_i/M)
+    else:
+        dPistar_dP = wp.pow(wp.float64(1.0)-alpha_bar*psi_i*N/M, (N-wp.float64(1.0))/N)
+
+    return dPistar_dP
+
+@wp.func
+def dPistar_dPi_function_NorSand(M: wp.float64, 
+                                 N: wp.float64, 
+                                 alpha_bar: wp.float64, 
+                                 P_trial: wp.float64, 
+                                 psi_i: wp.float64, 
+                                 dPsii_dPi: wp.float64):
+    dPistar_dPi = wp.float64(0.0)
+    if wp.abs(N) < 1e-8:
+        dPistar_dPi = P_trial * wp.exp(alpha_bar*psi_i/M) * alpha_bar/M * dPsii_dPi
+    else:
+        dPistar_dPi = P_trial * (N-wp.float64(1.0))/N * wp.pow(wp.float64(1.0)/(wp.float64(1.0)-alpha_bar*psi_i*N/M), wp.float64(1.0)/N) * (-alpha_bar*N/M) * (dPsii_dPi)
+
+    return dPistar_dPi
 
