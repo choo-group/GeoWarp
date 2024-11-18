@@ -201,7 +201,7 @@ def calculate_stress_residual_NorSand(new_strain_vector: wp.array(dtype=wp.float
 
     e_trace = wp.trace(e_real)
 
-    stress_principal = (lame_lambda*e_trace*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*e_real) / new_J # Cauchy stress
+    stress_principal = (lame_lambda*e_trace*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*e_real) #/ new_J # Cauchy stress
 
     saved_stress[0] = stress_principal
 

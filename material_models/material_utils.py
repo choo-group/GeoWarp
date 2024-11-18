@@ -366,6 +366,7 @@ def return_mapping_NorSand(trial_strain: wp.mat33d, # trial principal strain
     float64_one = wp.float64(1.0)
     float64_zero = wp.float64(0.0)
     K = lame_lambda + wp.float64(2.0)/wp.float64(3.0)*lame_mu
+    
     alpha_bar = wp.float64(-3.5)/beta
     xi = wp.float64(0.1) # parameter for the plastic potential function cap. See Eq. (2.76) of Borja, Andrade (2006) for more details
     old_pi = old_pi_array[0]
