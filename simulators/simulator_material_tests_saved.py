@@ -34,7 +34,7 @@ class SimulatorTriaxial:
                  solver_name='Warp'
         ):
         
-
+        
         # Dof quantities
         self.n_matrix_size = 6
 
@@ -69,12 +69,8 @@ class SimulatorTriaxial:
         self.youngs_modulus = self.elasticity_dict['youngs_modulus_initial']
         self.poisson_ratio = self.elasticity_dict['poisson_ratio_initial']
         self.Ir = self.elasticity_dict['Ir']
-        self.kappa = self.elasticity_dict['kappa']
-        # self.lame_lambda = self.youngs_modulus*self.poisson_ratio / ((1.0+self.poisson_ratio) * (1.0-2.0*self.poisson_ratio))
-        # self.lame_mu = self.youngs_modulus / (2.0*(1.0+self.poisson_ratio))
-        K0 = target_stress_xx / (-self.kappa)
-        self.lame_lambda = K0 - 2.0/3.0 * self.elasticity_dict['G0']
-        self.lame_mu = self.elasticity_dict['G0']
+        self.lame_lambda = self.youngs_modulus*self.poisson_ratio / ((1.0+self.poisson_ratio) * (1.0-2.0*self.poisson_ratio))
+        self.lame_mu = self.youngs_modulus / (2.0*(1.0+self.poisson_ratio))
         self.elastic_cto = wps.bsr_zeros(6, 6, block_type=wp.float64)
 
         self.plasticity_dict = plasticity_dict
@@ -141,9 +137,8 @@ class SimulatorTriaxial:
                   inputs=[self.strain_increment, self.total_strain_vector])
 
         total_strain_vector_np = self.total_strain_vector.numpy()
-        self.initial_volumetric_strain = (total_strain_vector_np[0] + total_strain_vector_np[1] + total_strain_vector_np[2]) 
+        self.initial_volumetric_strain = -1. * (total_strain_vector_np[0] + total_strain_vector_np[1] + total_strain_vector_np[2]) * 100.0
 
-        print('initial volumetric strain:', -self.initial_volumetric_strain * 100.0)
 
 
     def reset_grid_quantities(self):
@@ -181,7 +176,7 @@ class SimulatorTriaxial:
                 elif self.material_name=='Nor-Sand':
                     wp.launch(kernel=calculate_stress_residual_NorSand,
                               dim=1,
-                              inputs=[self.new_strain_vector, self.total_strain_vector, self.new_elastic_strain_vector, self.lame_lambda, self.lame_mu, self.plasticity_dict['M'], self.plasticity_dict['N'], self.saved_pi, self.old_pi, self.plasticity_dict['tilde_lambda'], self.plasticity_dict['beta'], self.plasticity_dict['v_c0'], self.plasticity_dict['v_0'], self.plasticity_dict['h'], self.tol, self.target_stress_xx, self.target_stress_yy, self.rhs, self.saved_stress, self.real_strain_array, self.pi_array, self.delta_lambda_array, self.saved_local_residual, self.saved_residual, self.saved_H, self.Ir, self.poisson_ratio, self.saved_p, self.kappa, self.initial_volumetric_strain])
+                              inputs=[self.new_strain_vector, self.total_strain_vector, self.new_elastic_strain_vector, self.lame_lambda, self.lame_mu, self.plasticity_dict['M'], self.plasticity_dict['N'], self.saved_pi, self.old_pi, self.plasticity_dict['tilde_lambda'], self.plasticity_dict['beta'], self.plasticity_dict['v_c0'], self.plasticity_dict['v_0'], self.plasticity_dict['h'], self.tol, self.target_stress_xx, self.target_stress_yy, self.rhs, self.saved_stress, self.real_strain_array, self.pi_array, self.delta_lambda_array, self.saved_local_residual, self.saved_residual, self.saved_H, self.Ir, self.poisson_ratio, self.saved_p])
                     
 
             # Assemble the Jacobian matrix using auto-differentiation
@@ -288,9 +283,7 @@ class SimulatorTriaxial:
         p_invariant = -1./3. * (saved_stress_np[0][0,0] + saved_stress_np[0][1,1] + saved_stress_np[0][2,2])
         pi = self.saved_pi[0:].numpy()[0]
         hardening_H = self.saved_H[0:].numpy()[0]
-        # print((current_step+1)*self.loading_rate*100.0, q_invariant) # print axial strain-stress
-        # print((current_step+1)*self.loading_rate*100.0, p_invariant) # print axial strain-stress
-        # print((current_step+1)*self.loading_rate*100.0, self.saved_H.numpy()) # print axial strain-stress
+        print((current_step+1)*self.loading_rate*100.0, q_invariant) # print axial strain-stress
         
         # Plastic strain
         total_strain_vector_np = self.total_strain_vector.numpy()
@@ -303,13 +296,13 @@ class SimulatorTriaxial:
 
         # Volumetric strain-axial strain
         total_strain_vector_np = self.total_strain_vector.numpy()
-        volumetric_strain = -1. * (total_strain_vector_np[0] + total_strain_vector_np[1] + total_strain_vector_np[2]) * 100.0 - (-self.initial_volumetric_strain * 100.0)
+        volumetric_strain = -1. * (total_strain_vector_np[0] + total_strain_vector_np[1] + total_strain_vector_np[2]) * 100.0 - self.initial_volumetric_strain
         eps_v_total = total_strain_vector_np[0] + total_strain_vector_np[1] + total_strain_vector_np[2]
         new_J = np.exp(eps_v_total)
         vf = new_J * (self.plasticity_dict['v_0'])
         ef = vf - 1.0
         # volumetric_strain = (-(ef-(self.plasticity_dict['v_0']-1.0))/(1.0+(self.plasticity_dict['v_0']-1.0))) * 100.0
-        print((current_step+1)*self.loading_rate*100.0, volumetric_strain)
+        # print((current_step+1)*self.loading_rate*100.0, volumetric_strain)
         # print(triaxial_shear_strain, volumetric_strain)
 
 

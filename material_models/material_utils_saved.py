@@ -364,27 +364,17 @@ def return_mapping_NorSand(trial_strain: wp.mat33d, # trial principal strain
                            saved_H: wp.array(dtype=wp.float64),
                            Ir: wp.float64,
                            poisson_ratio: wp.float64,
-                           saved_p: wp.float64,
-                           kappa: wp.float64,
-                           p0: wp.float64,
-                           initial_volumetric_strain: wp.float64) -> wp.mat33d:
+                           saved_p: wp.float64) -> wp.mat33d:
 
     float64_one = wp.float64(1.0)
     float64_zero = wp.float64(0.0)
     # K = lame_lambda + wp.float64(2.0)/wp.float64(3.0)*lame_mu
 
-    # # pressure-dependent elasticity
-    # G_elasticity = Ir * (-saved_p)
-    # K_elasticity = (wp.float64(2.0)*(wp.float64(1.0)+poisson_ratio))/(wp.float64(3.0)*(wp.float64(1.0)-wp.float64(2.0)*poisson_ratio)) * G_elasticity
-    # lame_lambda_new = K_elasticity - wp.float64(2.0)/wp.float64(3.0) * G_elasticity
-    # lame_mu_new = G_elasticity
-
-    # Constant elasticity
-    lame_lambda_new = lame_lambda
-    lame_mu_new = lame_mu
-    G_elasticity = lame_mu_new
-    K_elasticity = lame_lambda_new + wp.float64(2.0)/wp.float64(3.0) * lame_mu_new
-
+    # pressure-dependent elasticity
+    G_elasticity = Ir * (-saved_p)
+    K_elasticity = (wp.float64(2.0)*(wp.float64(1.0)+poisson_ratio))/(wp.float64(3.0)*(wp.float64(1.0)-wp.float64(2.0)*poisson_ratio)) * G_elasticity
+    lame_lambda_new = K_elasticity - wp.float64(2.0)/wp.float64(3.0) * G_elasticity
+    lame_mu_new = G_elasticity
 
 
     alpha_bar = wp.float64(-3.5)/beta
@@ -412,36 +402,21 @@ def return_mapping_NorSand(trial_strain: wp.mat33d, # trial principal strain
     # Calculate trial stress
     eps_v = wp.trace(trial_strain)
     eps_s = wp.sqrt(wp.float64(2.0)/wp.float64(9.0) * ((trial_strain[0,0]-trial_strain[1,1])*(trial_strain[0,0]-trial_strain[1,1]) + (trial_strain[1,1]-trial_strain[2,2])*(trial_strain[1,1]-trial_strain[2,2]) + (trial_strain[0,0]-trial_strain[2,2])*(trial_strain[0,0]-trial_strain[2,2])))
-    # tau_trial = lame_lambda_new*eps_v*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu_new*trial_strain
+    tau_trial = lame_lambda_new*eps_v*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu_new*trial_strain
 
     # Get deviatoric direction
-    # n_e_trial_deviatoric = wp.vec3d(
-    #                        trial_strain[0,0] - wp.float64(1.0)/wp.float64(3.0)*eps_v,
-    #                        trial_strain[1,1] - wp.float64(1.0)/wp.float64(3.0)*eps_v,
-    #                        trial_strain[2,2] - wp.float64(1.0)/wp.float64(3.0)*eps_v,
-    #                        )
-    # n_e_trial_deviatoric = wp.normalize(n_e_trial_deviatoric)
+    n_e_trial_deviatoric = wp.vec3d(
+                           trial_strain[0,0] - wp.float64(1.0)/wp.float64(3.0)*eps_v,
+                           trial_strain[1,1] - wp.float64(1.0)/wp.float64(3.0)*eps_v,
+                           trial_strain[2,2] - wp.float64(1.0)/wp.float64(3.0)*eps_v,
+                           )
+    n_e_trial_deviatoric = wp.normalize(n_e_trial_deviatoric)
 
-    n_e_trial_deviatoric = wp.vec3d()
-    if eps_s > tol:
-        n_e_trial_deviatoric = wp.vec3d(
-                               wp.sqrt(wp.float64(2.0)/wp.float64(3.0)) * (trial_strain[0,0] - eps_v/wp.float64(3.0))/(eps_s),
-                               wp.sqrt(wp.float64(2.0)/wp.float64(3.0)) * (trial_strain[1,1] - eps_v/wp.float64(3.0))/(eps_s),
-                               wp.sqrt(wp.float64(2.0)/wp.float64(3.0)) * (trial_strain[2,2] - eps_v/wp.float64(3.0))/(eps_s),
-                               )
-    else:
-        n_e_trial_deviatoric = wp.vec3d()
-
-    # # Get P and Q invariants
-    # P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_trial)
-    # S_trial = tau_trial - P_trial*wp.identity(n=3, dtype=wp.float64)
-    # S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
-    # Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
-
-    # Pressure-dependent hyperelasticity
-    omega = -(eps_v-initial_volumetric_strain)/kappa
-    P_trial = p0 * wp.exp(omega)
-    Q_trial = wp.float64(3.0)*G_elasticity * eps_s
+    # Get P and Q invariants
+    P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_trial)
+    S_trial = tau_trial - P_trial*wp.identity(n=3, dtype=wp.float64)
+    S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
+    Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
 
     # Get new volume
     eps_v_total = wp.trace(total_strain)
@@ -457,7 +432,7 @@ def return_mapping_NorSand(trial_strain: wp.mat33d, # trial principal strain
         yield_y = yield_function_NorSand(P_trial, Q_trial, M, N, old_pi)
 
         if yield_y<wp.float64(1e-10):
-            # saved_H[0] = old_pi
+            saved_H[0] = old_pi
             pass # elasticity
         else:
             # plasticity
@@ -796,18 +771,12 @@ def return_mapping_NorSand(trial_strain: wp.mat33d, # trial principal strain
                     eps_real_s = wp.sqrt(wp.float64(2.0)/wp.float64(9.0) * ((real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][1,1]) + (real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][1,1]-real_strain_array[local_iter][2,2]) + (real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])*(real_strain_array[local_iter][0,0]-real_strain_array[local_iter][2,2])))
                     new_pi = pi_array[local_iter]
 
-                    dEtadP = dEtadP_function_NorSand(M, N, P_trial, new_pi)
-                    dEtadPi = dEtadPi_function_NorSand(M, N, P_trial, new_pi)
-                    eta = eta_function_NorSand(M, N, P_trial, new_pi)
-                    # dFdP = wp.float64(0.0)
-                    # if wp.abs(N)<1e-8:
-                    #     dFdP = M * wp.log(new_pi/P_trial) # TODO: wrong???
-                    # else:
-                    #     dFdP = M/N * (wp.float64(1.0) - wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N))) # TODO: wrong???
-                    dFdP = (eta-M)/(wp.float64(1.0)-N) # See Eq. (24) in Andrade & Borja, 2006, IJNME
+                    dFdP = wp.float64(0.0)
                     dFdQ = wp.float64(1.0)
-
-
+                    if wp.abs(N)<1e-8:
+                        dFdP = M * wp.log(new_pi/P_trial)
+                    else:
+                        dFdP = M/N * (wp.float64(1.0) - wp.pow(P_trial/new_pi, N/(wp.float64(1.0)-N)))
 
 
                     # residual
@@ -829,26 +798,20 @@ def return_mapping_NorSand(trial_strain: wp.mat33d, # trial principal strain
                                )
 
                     # local jacobian
-                    
-                    # d2F_dPdepsv = wp.float64(1.0)/(wp.float64(1.0)-N) * dEtadP * K_elasticity 
-                    # d2F_dPdPi = wp.float64(1.0)/(wp.float64(1.0)-N) * dEtadPi 
+                    dEtadP = dEtadP_function_NorSand(M, N, P_trial, new_pi)
+                    dEtadPi = dEtadPi_function_NorSand(M, N, P_trial, new_pi)
+                    d2F_dPdepsv = dEtadP * K_elasticity
+                    d2F_dPdPi = dEtadPi
 
-                    # Pressure-dependent hyperelasticity
-                    omega_new = -(eps_real_v-initial_volumetric_strain) / kappa
-                    d2F_dPdepsv = wp.float64(1.0)/(wp.float64(1.0)-N) * dEtadP * (p0 * wp.exp(omega_new) / wp.float64(-kappa))
-                    d2F_dPdPi = wp.float64(1.0)/(wp.float64(1.0)-N) * dEtadPi 
-
-                    
-                    # dFdepsv = (dEtadP*P_trial + eta) * K_elasticity
-                    dFdepsv = (dEtadP*P_trial + eta) * (p0 * wp.exp(omega_new) / wp.float64(-kappa))
+                    eta = eta_function_NorSand(M, N, P_trial, new_pi)
+                    dFdepsv = (dEtadP*P_trial + eta) * K_elasticity
                     dFdepss = wp.float64(3.0) * lame_mu_new
                     dFdPi = P_trial * dEtadPi
 
                     dPistar_dP = dPistar_dP_function_NorSand(M, N, alpha_bar, psi_i)
                     dPsii_dPi = tilde_lambda/new_pi
                     dPistar_dPi = dPistar_dPi_function_NorSand(M, N, alpha_bar, P_trial, psi_i, dPsii_dPi)
-                    # dHdepsv = -h*delta_lambda*dPistar_dP*K_elasticity
-                    dHdepsv = -h*delta_lambda*dPistar_dP * (p0 * wp.exp(omega_new) / wp.float64(-kappa))
+                    dHdepsv = -h*delta_lambda*dPistar_dP*K_elasticity
                     dHdPi = wp.float64(1.0) + h*delta_lambda*(wp.float64(1.0) - dPistar_dPi)
 
 
@@ -879,18 +842,12 @@ def return_mapping_NorSand(trial_strain: wp.mat33d, # trial principal strain
 
                     # Update stress
                     eps_v_tmp = wp.trace(real_strain_array[local_iter+1])
-                    eps_s_tmp = wp.sqrt(wp.float64(2.0)/wp.float64(9.0) * ((real_strain_array[local_iter+1][0,0]-real_strain_array[local_iter+1][1,1])*(real_strain_array[local_iter+1][0,0]-real_strain_array[local_iter+1][1,1]) + (real_strain_array[local_iter+1][1,1]-real_strain_array[local_iter+1][2,2])*(real_strain_array[local_iter+1][1,1]-real_strain_array[local_iter+1][2,2]) + (real_strain_array[local_iter+1][0,0]-real_strain_array[local_iter+1][2,2])*(real_strain_array[local_iter+1][0,0]-real_strain_array[local_iter+1][2,2])))
-                    # tau_tmp = lame_lambda_new*eps_v_tmp*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu_new*real_strain_array[local_iter+1]
+                    tau_tmp = lame_lambda_new*eps_v_tmp*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu_new*real_strain_array[local_iter+1]
 
-                    # P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_tmp)
-                    # S_trial = tau_tmp - P_trial*wp.identity(n=3, dtype=wp.float64)
-                    # S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
-                    # Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
-
-                    # Pressure-dependent hyperelasticity
-                    omega_new = -(eps_v_tmp-initial_volumetric_strain) / kappa
-                    P_trial = p0 * wp.exp(omega_new)
-                    Q_trial = wp.float64(3.0)*G_elasticity * eps_s_tmp
+                    P_trial = wp.float64(1.)/wp.float64(3.) * wp.trace(tau_tmp)
+                    S_trial = tau_tmp - P_trial*wp.identity(n=3, dtype=wp.float64)
+                    S_trial_norm = wp.sqrt(wp.pow(S_trial[0,0], wp.float64(2.)) + wp.pow(S_trial[1,1], wp.float64(2.)) + wp.pow(S_trial[2,2], wp.float64(2.)))
+                    Q_trial = S_trial_norm * wp.sqrt(wp.float64(3.)/wp.float64(2.))
 
 
                     real_strain = wp.mat33d(
