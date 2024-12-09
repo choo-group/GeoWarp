@@ -14,9 +14,12 @@ import meshio
 final_strain = 0.05
 n_steps = 100
 loading_rate = final_strain/n_steps
-target_stress_xx = -390 #-425 #-500.0 #-60.0 # compression negative
-target_stress_yy = -390 #-425 #-500.0 #-60.0
-target_stress_zz = -390 #-425 #-500.0 #-60.0
+target_stress_xx = 0.0 #-390 #-425 #-500.0 #-60.0 # compression negative
+target_stress_yy = 0.0 #-390 #-425 #-500.0 #-60.0
+target_stress_zz = 0.0 #-390 #-425 #-500.0 #-60.0
+
+p0 = -390 #-425
+K0_consolidation = 0.45 #0.38
 
 # Material properties
 youngs_modulus = 12.82e4 #30e4 #14.4e4 #18.72e4 #2.016e4 # kPa # 
@@ -71,6 +74,8 @@ sim = SimulatorTriaxial(
                  material_name=material_name,
                  tol=tol,
                  plasticity_dict=plasticity_dict,
+                 p0=p0,
+                 K0_consolidation=K0_consolidation,
                  loading_rate=loading_rate,
                  target_stress_xx=target_stress_xx,
                  target_stress_yy=target_stress_yy,

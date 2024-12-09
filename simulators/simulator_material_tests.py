@@ -27,6 +27,8 @@ class SimulatorTriaxial:
                  material_name,
                  tol,
                  plasticity_dict,
+                 p0,
+                 K0_consolidation,
                  loading_rate,
                  target_stress_xx,
                  target_stress_yy,
@@ -43,7 +45,7 @@ class SimulatorTriaxial:
         self.rhs = wp.zeros(shape=self.n_matrix_size, dtype=wp.float64, requires_grad=True)
         self.rhs_initial_stress = wp.zeros(shape=self.n_matrix_size, dtype=wp.float64)
         self.new_strain_vector = wp.zeros(shape=self.n_matrix_size, dtype=wp.float64, requires_grad=True)
-        self.total_strain_vector = wp.zeros(shape=self.n_matrix_size, dtype=wp.float64)
+        self.total_strain_vector = wp.zeros(shape=self.n_matrix_size, dtype=wp.float64, requires_grad=True)
         self.new_elastic_strain_vector = wp.zeros(shape=self.n_matrix_size, dtype=wp.float64, requires_grad=True)
         self.strain_increment = wp.zeros(shape=self.n_matrix_size, dtype=wp.float64)
 
@@ -72,7 +74,21 @@ class SimulatorTriaxial:
         self.kappa = self.elasticity_dict['kappa']
         # self.lame_lambda = self.youngs_modulus*self.poisson_ratio / ((1.0+self.poisson_ratio) * (1.0-2.0*self.poisson_ratio))
         # self.lame_mu = self.youngs_modulus / (2.0*(1.0+self.poisson_ratio))
-        K0 = target_stress_xx / (-self.kappa)
+        
+        self.p0 = p0
+        self.slope_K0_pq = (1.-K0_consolidation)/(1./3.*(1.+2.*K0_consolidation))
+
+        self.target_stress_xx = (3.-self.slope_K0_pq)/3. * self.p0
+        self.target_stress_yy = self.target_stress_xx
+        self.target_stress_zz = (3.+2*self.slope_K0_pq)/3. * self.p0
+
+        print('slope_K0_pq:', self.slope_K0_pq)
+        print('target stress_xx:', self.target_stress_xx)
+        print('target stress_zz:', self.target_stress_zz)
+
+
+
+        K0 = self.p0 / (-self.kappa) 
         self.lame_lambda = K0 - 2.0/3.0 * self.elasticity_dict['G0']
         self.lame_mu = self.elasticity_dict['G0']
         self.elastic_cto = wps.bsr_zeros(6, 6, block_type=wp.float64)
@@ -80,19 +96,22 @@ class SimulatorTriaxial:
         self.plasticity_dict = plasticity_dict
 
         self.material_name = material_name
+
+        
         
 
 
         # Loading
         self.loading_rate = loading_rate
-        self.target_stress_xx = target_stress_xx
-        self.target_stress_yy = target_stress_yy
-        self.target_stress_zz = target_stress_zz
+        # self.target_stress_xx = target_stress_xx
+        # self.target_stress_yy = target_stress_yy
+        # self.target_stress_zz = target_stress_zz
 
 
         # Post-processing
         self.saved_stress = wp.array(shape=1, dtype=wp.mat33d)
-        self.saved_p = self.target_stress_zz
+        # self.saved_p = self.target_stress_zz
+        self.saved_p = self.p0
 
 
         # Intermidiate quantities for local return mapping. This is important to ensure correct gradients
@@ -181,7 +200,7 @@ class SimulatorTriaxial:
                 elif self.material_name=='Nor-Sand':
                     wp.launch(kernel=calculate_stress_residual_NorSand,
                               dim=1,
-                              inputs=[self.new_strain_vector, self.total_strain_vector, self.new_elastic_strain_vector, self.lame_lambda, self.lame_mu, self.plasticity_dict['M'], self.plasticity_dict['N'], self.saved_pi, self.old_pi, self.plasticity_dict['tilde_lambda'], self.plasticity_dict['beta'], self.plasticity_dict['v_c0'], self.plasticity_dict['v_0'], self.plasticity_dict['h'], self.tol, self.target_stress_xx, self.target_stress_yy, self.rhs, self.saved_stress, self.real_strain_array, self.pi_array, self.delta_lambda_array, self.saved_local_residual, self.saved_residual, self.saved_H, self.Ir, self.poisson_ratio, self.saved_p, self.kappa, self.initial_volumetric_strain])
+                              inputs=[self.new_strain_vector, self.total_strain_vector, self.new_elastic_strain_vector, self.lame_lambda, self.lame_mu, self.plasticity_dict['M'], self.plasticity_dict['N'], self.saved_pi, self.old_pi, self.plasticity_dict['tilde_lambda'], self.plasticity_dict['beta'], self.plasticity_dict['v_c0'], self.plasticity_dict['v_0'], self.plasticity_dict['h'], self.tol, self.target_stress_xx, self.target_stress_yy, self.rhs, self.saved_stress, self.real_strain_array, self.pi_array, self.delta_lambda_array, self.saved_local_residual, self.saved_residual, self.saved_H, self.Ir, self.poisson_ratio, self.saved_p, self.kappa, self.initial_volumetric_strain, self.p0])
                     
 
             # Assemble the Jacobian matrix using auto-differentiation
@@ -195,6 +214,7 @@ class SimulatorTriaxial:
 
                 tape.backward(grads={self.rhs: e})
                 q_grad_i = tape.gradients[self.new_strain_vector]
+                # q_grad_i = tape.gradients[self.total_strain_vector]
 
                 # assemble the Jacobian matrix in COOrdinate format
                 wp.launch(kernel=assemble_Jacobian_coo_format_material_tests,
@@ -246,6 +266,9 @@ class SimulatorTriaxial:
                 self.strain_increment = wp.from_numpy(x_direct, dtype=wp.float64)
 
 
+            # print(iter_id, self.strain_increment.numpy())
+
+
 
 
 
@@ -289,7 +312,7 @@ class SimulatorTriaxial:
         pi = self.saved_pi[0:].numpy()[0]
         hardening_H = self.saved_H[0:].numpy()[0]
         # print((current_step+1)*self.loading_rate*100.0, q_invariant) # print axial strain-stress
-        # print((current_step+1)*self.loading_rate*100.0, p_invariant) # print axial strain-stress
+        # print((current_step+1)*self.loading_rate*100.0, p_invariant, self.saved_H.numpy()) # print axial strain-stress
         # print((current_step+1)*self.loading_rate*100.0, self.saved_H.numpy()) # print axial strain-stress
         
         # Plastic strain

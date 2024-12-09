@@ -177,7 +177,8 @@ def calculate_stress_residual_NorSand(new_strain_vector: wp.array(dtype=wp.float
                                       poisson_ratio: wp.float64,
                                       saved_p: wp.float64,
                                       kappa: wp.float64,
-                                      initial_volumetric_strain: wp.float64):
+                                      initial_volumetric_strain: wp.float64,
+                                      p0: wp.float64):
 
     float64_one = wp.float64(1.0)
     float64_zero = wp.float64(0.0)
@@ -197,7 +198,7 @@ def calculate_stress_residual_NorSand(new_strain_vector: wp.array(dtype=wp.float
 
     new_J = wp.exp(wp.trace(total_strain))
 
-    e_real = return_mapping_NorSand(trial_strain, total_strain, lame_lambda, lame_mu, M, N, saved_pi, old_pi, tilde_lambda, beta, v_c0, v_0, h, tol, real_strain_array, pi_array, delta_lambda_array, saved_local_residual, saved_residual, saved_H, Ir, poisson_ratio, saved_p, kappa, target_stress_xx, initial_volumetric_strain)
+    e_real = return_mapping_NorSand(trial_strain, total_strain, lame_lambda, lame_mu, M, N, saved_pi, old_pi, tilde_lambda, beta, v_c0, v_0, h, tol, real_strain_array, pi_array, delta_lambda_array, saved_local_residual, saved_residual, saved_H, Ir, poisson_ratio, saved_p, kappa, p0, initial_volumetric_strain)
     
 
     new_elastic_strain_vector[0] = e_real[0,0]
@@ -211,10 +212,17 @@ def calculate_stress_residual_NorSand(new_strain_vector: wp.array(dtype=wp.float
 
     # Pressure-dependent hyperelasticity
     omega = -(e_trace-initial_volumetric_strain)/kappa
-    K_elasticity = target_stress_xx * wp.exp(omega) / wp.float64(-kappa)
-    lame_lambda_elasticity = K_elasticity - wp.float64(2.0)/wp.float64(3.0) * lame_mu
-    saved_H[0] = lame_lambda_elasticity
-    stress_principal = (lame_lambda_elasticity*e_trace*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*e_real) / new_J # Cauchy stress
+    # K_elasticity = p0 * wp.exp(omega) / wp.float64(-kappa)
+    # lame_lambda_elasticity = K_elasticity - wp.float64(2.0)/wp.float64(3.0) * lame_mu
+    # saved_H[0] = lame_lambda_elasticity
+    # stress_principal = (lame_lambda_elasticity*e_trace*wp.identity(n=3, dtype=wp.float64) + wp.float64(2.)*lame_mu*e_real) #/ new_J # Cauchy stress
+    stress_principal = wp.mat33d(
+                       -p0*kappa*wp.exp(omega)/(-kappa) + wp.float64(2.)/wp.float64(3.)*lame_mu*(wp.float64(3.)*e_real[0,0]-e_trace), wp.float64(0.), wp.float64(0.),
+                       wp.float64(0.), -p0*kappa*wp.exp(omega)/(-kappa) + wp.float64(2.)/wp.float64(3.)*lame_mu*(wp.float64(3.)*e_real[1,1]-e_trace), wp.float64(0.),
+                       wp.float64(0.), wp.float64(0.), -p0*kappa*wp.exp(omega)/(-kappa) + wp.float64(2.)/wp.float64(3.)*lame_mu*(wp.float64(3.)*e_real[2,2]-e_trace)
+                       )
+
+    saved_H[0] = p0 * wp.exp(omega)
 
 
     saved_stress[0] = stress_principal
