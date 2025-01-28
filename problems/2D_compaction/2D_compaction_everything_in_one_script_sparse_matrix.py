@@ -765,7 +765,8 @@ selector = np.append(selector, selector_right)
 
 for selector_iter in range(len(selector_right)):
     this_selector = selector_right[selector_iter]
-    selector_up = np.arange(this_selector+5*(n_grid_x+1), c_iter+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
+    this_selector_c = this_selector % (n_grid_x+1)
+    selector_up = np.arange(this_selector+5*(n_grid_x+1), this_selector_c+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
 
     selector = np.append(selector, selector_up)
 
@@ -856,7 +857,8 @@ for step in range(40):
 
                 for selector_iter in range(len(selector_right)):
                     this_selector = selector_right[selector_iter]
-                    selector_up = np.arange(this_selector+5*(n_grid_x+1), c_iter+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
+                    this_selector_c = this_selector % (n_grid_x+1)
+                    selector_up = np.arange(this_selector+5*(n_grid_x+1), this_selector_c+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
 
                     selector = np.append(selector, selector_up)
 
@@ -905,7 +907,8 @@ for step in range(40):
 
                 for selector_iter in range(len(selector_right)):
                     this_selector = selector_right[selector_iter]
-                    selector_up = np.arange(this_selector+5*(n_grid_x+1), c_iter+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
+                    this_selector_c = this_selector % (n_grid_x+1)
+                    selector_up = np.arange(this_selector+5*(n_grid_x+1), this_selector_c+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
 
                     selector = np.append(selector, selector_up)
 
