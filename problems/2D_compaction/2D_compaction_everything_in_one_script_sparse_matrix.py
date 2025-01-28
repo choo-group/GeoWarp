@@ -758,19 +758,56 @@ c_iter = 0
 r_iter = 0
 current_node_id = c_iter + r_iter * (n_grid_x + 1)
 
-selector_right = np.arange(current_node_id, r_iter*(n_grid_x+1)+n_grid_x+1, 5)
+def pick_grid_nodes(n_grid_x, n_grid_y, first_grid_node):
+    # Determine the row and column of the first grid node
+    row_start = first_grid_node // (n_grid_x + 1)
+    col_start = first_grid_node % (n_grid_x + 1)
 
-selector = np.empty(0, int)
-selector = np.append(selector, selector_right)
+    # Step size for the 5x5 grid
+    step = 5
 
-for selector_iter in range(len(selector_right)):
-    this_selector = selector_right[selector_iter]
-    this_selector_c = this_selector % (n_grid_x+1)
-    selector_up = np.arange(this_selector+5*(n_grid_x+1), this_selector_c+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
+    # Create arrays for rows and columns to pick nodes efficiently
+    rows = np.arange(row_start, n_grid_y + 1, step)
+    cols = np.arange(col_start, n_grid_x + 1, step)
 
-    selector = np.append(selector, selector_up)
+    # Generate a grid of row and column indices
+    row_indices, col_indices = np.meshgrid(rows, cols, indexing='ij')
+
+    # Compute the node indices
+    picked_nodes = row_indices * (n_grid_x + 1) + col_indices
+
+    # Flatten the array and filter out indices exceeding the total number of nodes
+    # total_nodes = (n_grid_x + 1) * (n_grid_y + 1)
+    picked_nodes = picked_nodes.flatten()
+    # picked_nodes = picked_nodes[picked_nodes < total_nodes]
+    
+
+    return picked_nodes
+
+
+selector = pick_grid_nodes(n_grid_x, n_grid_y, current_node_id)
 
 max_selector_length = len(selector)
+
+
+
+
+# selector_right = np.arange(current_node_id, r_iter*(n_grid_x+1)+n_grid_x+1, 5)
+
+# selector = np.empty(0, int)
+# selector = np.append(selector, selector_right)
+
+# for selector_iter in range(len(selector_right)):
+#     this_selector = selector_right[selector_iter]
+#     this_selector_c = this_selector % (n_grid_x+1)
+#     selector_up = np.arange(this_selector+5*(n_grid_x+1), this_selector_c+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
+
+#     selector = np.append(selector, selector_up)
+
+# max_selector_length = len(selector)
+
+
+
 
 selector_wp = wp.zeros(shape=max_selector_length, dtype=wp.int32)
 
@@ -850,17 +887,19 @@ for step in range(40):
                 current_node_id = c_iter + r_iter * (n_grid_x + 1)
                 select_index = np.zeros(n_matrix_size)
 
-                selector_right = np.arange(current_node_id, r_iter*(n_grid_x+1)+n_grid_x+1, 5)
+                # selector_right = np.arange(current_node_id, r_iter*(n_grid_x+1)+n_grid_x+1, 5)
 
-                selector = np.empty(0, int)
-                selector = np.append(selector, selector_right)
+                # selector = np.empty(0, int)
+                # selector = np.append(selector, selector_right)
 
-                for selector_iter in range(len(selector_right)):
-                    this_selector = selector_right[selector_iter]
-                    this_selector_c = this_selector % (n_grid_x+1)
-                    selector_up = np.arange(this_selector+5*(n_grid_x+1), this_selector_c+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
+                # for selector_iter in range(len(selector_right)):
+                #     this_selector = selector_right[selector_iter]
+                #     this_selector_c = this_selector % (n_grid_x+1)
+                #     selector_up = np.arange(this_selector+5*(n_grid_x+1), this_selector_c+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
 
-                    selector = np.append(selector, selector_up)
+                #     selector = np.append(selector, selector_up)
+
+                selector = pick_grid_nodes(n_grid_x, n_grid_y, current_node_id)
 
 
 
@@ -900,17 +939,19 @@ for step in range(40):
                 current_node_id = c_iter + r_iter * (n_grid_x + 1)
                 select_index = np.zeros(n_matrix_size)
 
-                selector_right = np.arange(current_node_id, r_iter*(n_grid_x+1)+n_grid_x+1, 5)
+                # selector_right = np.arange(current_node_id, r_iter*(n_grid_x+1)+n_grid_x+1, 5)
 
-                selector = np.empty(0, int)
-                selector = np.append(selector, selector_right)
+                # selector = np.empty(0, int)
+                # selector = np.append(selector, selector_right)
 
-                for selector_iter in range(len(selector_right)):
-                    this_selector = selector_right[selector_iter]
-                    this_selector_c = this_selector % (n_grid_x+1)
-                    selector_up = np.arange(this_selector+5*(n_grid_x+1), this_selector_c+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
+                # for selector_iter in range(len(selector_right)):
+                #     this_selector = selector_right[selector_iter]
+                #     this_selector_c = this_selector % (n_grid_x+1)
+                #     selector_up = np.arange(this_selector+5*(n_grid_x+1), this_selector_c+n_grid_y*(n_grid_x+1)+1, 5*(n_grid_x+1))
 
-                    selector = np.append(selector, selector_up)
+                #     selector = np.append(selector, selector_up)
+
+                selector = pick_grid_nodes(n_grid_x, n_grid_y, current_node_id)
 
                 # from node id (x) to y dof
                 selector += n_nodes
