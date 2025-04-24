@@ -178,6 +178,7 @@ def yield_function_NorSand(P: wp.float64,
 
     return Q + eta * P
 
+# Partial eta partial p
 @wp.func
 def dEtadP_function_NorSand(M: wp.float64,
                             N: wp.float64,
@@ -192,6 +193,7 @@ def dEtadP_function_NorSand(M: wp.float64,
 
     return dEtadP
 
+# partial eta partial pi
 @wp.func
 def dEtadPi_function_NorSand(M: wp.float64,
                              N: wp.float64,
@@ -206,6 +208,7 @@ def dEtadPi_function_NorSand(M: wp.float64,
 
     return dEtadPi
 
+# partial pi_star partial p
 @wp.func
 def dPistar_dP_function_NorSand(M: wp.float64,
                                 N: wp.float64,
@@ -220,6 +223,7 @@ def dPistar_dP_function_NorSand(M: wp.float64,
 
     return dPistar_dP
 
+# partial pi_star partial pi
 @wp.func
 def dPistar_dPi_function_NorSand(M: wp.float64,
                                  N: wp.float64,
@@ -439,12 +443,13 @@ def calculate_stress_residual_NorSand(kappa: wp.float64,
 
     new_J = wp.exp(wp.trace(total_strain))
 
-    # e_real = trial_strain
+    # Get real strain through return mapping
     e_real = return_mapping_NorSand(kappa, tilde_lambda, M, N, beta, vc0, p0, v0, h, lame_mu, initial_volumetric_strain, old_pi_array, new_pi_array, trial_strain, total_strain, real_strain_history, pi_history, delta_lambda_history, saved_local_residual, tol)
     new_elastic_strain_array[0] = e_real[0,0]
     new_elastic_strain_array[1] = e_real[1,1]
     new_elastic_strain_array[2] = e_real[2,2]
 
+    # Get new stress
     # Pressure-dependent hyperelasticity
     e_trace = wp.trace(e_real)
     omega = -(e_trace-initial_volumetric_strain)/kappa
@@ -482,8 +487,8 @@ def assemble_Jacobian_coo_format(jacobian_wp: wp.array(dtype=wp.float64),
 
 @wp.kernel
 def set_new_trial_strain_array_to_elastic_strain(new_trial_strain_array: wp.array(dtype=wp.float64),
-                                           new_elastic_strain_array: wp.array(dtype=wp.float64)
-                                           ):
+                                                 new_elastic_strain_array: wp.array(dtype=wp.float64)
+                                                 ):
     new_trial_strain_array[0] = new_elastic_strain_array[0]
     new_trial_strain_array[1] = new_elastic_strain_array[1]
     new_trial_strain_array[2] = new_elastic_strain_array[2]
