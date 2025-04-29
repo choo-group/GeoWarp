@@ -23,7 +23,7 @@ import time
 
 
 # Implicit MPM solver for 2D beam using Warp
-# Contact: Yidong Zhao (ydzhao@kaist.ac.kr; ydzhao94@gmail.com)
+# Contact: Yidong Zhao (ydzhao94@gmail.com)
 
 # Refer to an implicit FEM solver (by Xuan Li) for the usage of sparse matrix: https://github.com/xuan-li/warp_FEM/tree/main
 
@@ -996,8 +996,30 @@ for c_iter in range(5):
 
 
 
+# Timer
+class reentrant_timer:
+    def __init__(self):
+        self.total_time = 0.0
+        self._start_time = None
 
-tic = time.perf_counter()
+    def __enter__(self):
+        self._start_time = time.perf_counter()
+        return self
+
+    def __exit__(self, *args):
+        elapsed = time.perf_counter() - self._start_time
+        self.total_time += elapsed
+
+    def reset(self):
+        self.total_time = 0.0
+
+    def get_total_time(self):
+        return self.total_time
+
+timer = reentrant_timer()
+
+
+# tic = time.perf_counter()
 for step in range(50):
     print('Load step', step)
 
@@ -1045,61 +1067,61 @@ for step in range(50):
                       inputs=[x_particles, inv_dx, dx, rhs, increment_solution, p_vol, p_rho, lame_lambda, lame_mu, deformation_gradient_total_new, deformation_gradient_total_old, left_Cauchy_Green_new, left_Cauchy_Green_old, n_grid_x, n_nodes, dofStruct, step, particle_Cauchy_stress_array, particle_external_flag_array, GIMP_lp])
 
 
+        with timer:
+            # Sparse differentiation
+            pattern_id = 0
+            for c_iter in range(5):
+                for r_iter in range(5):
+                    current_node_id = c_iter + r_iter * (n_grid_x+1)
+                    select_index = np.zeros(n_matrix_size)
 
-        # Sparse differentiation
-        pattern_id = 0
-        for c_iter in range(5):
-            for r_iter in range(5):
-                current_node_id = c_iter + r_iter * (n_grid_x+1)
-                select_index = np.zeros(n_matrix_size)
+                    # x
+                    tape.backward(grads={rhs: e_x_list[pattern_id]})
+                    jacobian_wp = tape.gradients[increment_solution]
+                    wp.launch(kernel=from_jacobian_to_vector_parallel,
+                              dim=max_selector_length,
+                              inputs=[jacobian_wp, rows, cols, vals, n_grid_x, n_grid_y, n_nodes, n_matrix_size, selector_x_list[pattern_id], dofStruct])
+                    tape.zero()
 
-                # x
-                tape.backward(grads={rhs: e_x_list[pattern_id]})
-                jacobian_wp = tape.gradients[increment_solution]
-                wp.launch(kernel=from_jacobian_to_vector_parallel,
-                          dim=max_selector_length,
-                          inputs=[jacobian_wp, rows, cols, vals, n_grid_x, n_grid_y, n_nodes, n_matrix_size, selector_x_list[pattern_id], dofStruct])
-                tape.zero()
-
-                # y
-                tape.backward(grads={rhs: e_y_list[pattern_id]})
-                jacobian_wp = tape.gradients[increment_solution]
-                wp.launch(kernel=from_jacobian_to_vector_parallel,
-                          dim=max_selector_length,
-                          inputs=[jacobian_wp, rows, cols, vals, n_grid_x, n_grid_y, n_nodes, n_matrix_size, selector_y_list[pattern_id], dofStruct])
-                tape.zero()
-
-
-                pattern_id = pattern_id + 1
-
-        tape.reset()
+                    # y
+                    tape.backward(grads={rhs: e_y_list[pattern_id]})
+                    jacobian_wp = tape.gradients[increment_solution]
+                    wp.launch(kernel=from_jacobian_to_vector_parallel,
+                              dim=max_selector_length,
+                              inputs=[jacobian_wp, rows, cols, vals, n_grid_x, n_grid_y, n_nodes, n_matrix_size, selector_y_list[pattern_id], dofStruct])
+                    tape.zero()
 
 
+                    pattern_id = pattern_id + 1
+
+            tape.reset()
 
 
 
-        # # Naive differentiation
-        # for output_index in range(n_matrix_size): # Loop on dofs
-
-        #     if boundary_flag_array_np[output_index]==True or activated_flag_array_np[output_index]==False: # This is important for efficient assemblage
-        #         continue
-
-        #     select_index = np.zeros(n_matrix_size)
-        #     select_index[output_index] = 1.0
-        #     e = wp.array(select_index, dtype=wp.float64)
-
-        #     tape.backward(grads={rhs: e})
-        #     q_grad_i = tape.gradients[increment_solution]
 
 
-        #     wp.launch(kernel=from_jacobian_to_vector,
-        #           dim=n_matrix_size,
-        #           inputs=[q_grad_i, rows, cols, vals, n_grid_x, n_grid_y, n_nodes, n_matrix_size, output_index, dofStruct])
+            # # Naive differentiation
+            # for output_index in range(n_matrix_size): # Loop on dofs
 
-                        
-        #     tape.zero()
+            #     if boundary_flag_array_np[output_index]==True or activated_flag_array_np[output_index]==False: # This is important for efficient assemblage
+            #         continue
 
-        # tape.reset()
+            #     select_index = np.zeros(n_matrix_size)
+            #     select_index[output_index] = 1.0
+            #     e = wp.array(select_index, dtype=wp.float64)
+
+            #     tape.backward(grads={rhs: e})
+            #     q_grad_i = tape.gradients[increment_solution]
+
+
+            #     wp.launch(kernel=from_jacobian_to_vector,
+            #           dim=n_matrix_size,
+            #           inputs=[q_grad_i, rows, cols, vals, n_grid_x, n_grid_y, n_nodes, n_matrix_size, output_index, dofStruct])
+
+                            
+            #     tape.zero()
+
+            # tape.reset()
 
 
         # Adjust diagonal components of the global matrix
@@ -1197,7 +1219,7 @@ for step in range(50):
 
     # Post-processing
     x_numpy = np.array(x_particles.numpy())
-    output_particles = meshio.Mesh(points=x_numpy, cells=[], point_data={'stress_yy': particle_Cauchy_stress_array.numpy()[:,1,1], 'ext_boundary_flag': particle_external_flag_array.numpy().astype(float)})
+    output_particles = meshio.Mesh(points=x_numpy, cells=[], point_data={'stress_xx': particle_Cauchy_stress_array.numpy()[:,0,0],'stress_yy': particle_Cauchy_stress_array.numpy()[:,1,1], 'ext_boundary_flag': particle_external_flag_array.numpy().astype(float)})
     output_particles.write("2d_bream_particles_%d.vtk" % (step+1))
 
     output_frame += 1
@@ -1206,6 +1228,8 @@ for step in range(50):
 load_displacement_array = np.reshape(load_displacement_array, (-1,3))
 # print(load_displacement_array)
 
-toc = time.perf_counter()
-print('Total run time:', toc-tic)
+# toc = time.perf_counter()
+# print('Total run time:', toc-tic)
+
+print("Differentiation time:", timer.get_total_time())
 
