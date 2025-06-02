@@ -14,7 +14,7 @@ from scipy.sparse.linalg import spsolve
 from pyamg import smoothed_aggregation_solver
 
 from solvers.sparse_differentiation import pick_grid_nodes_2d, precompute_seed_vectors_2d, from_jacobian_to_vector_parallel_2d
-from mpm.mpm_utils import init_particles_rectangle_2d, initialization, P2G_2d, assemble_residual_2d_hencky, set_diagnal_component_for_boundary_and_deactivated_dofs_2d, from_increment_to_solution, G2P_2d
+from mpm.mpm_utils import init_particles_rectangle_2d, initialization, P2G_2d, assemble_residual_2d_hencky, assemble_residual_2d_J2, set_diagnal_component_for_boundary_and_deactivated_dofs_2d, from_increment_to_solution, G2P_2d
 from mpm.gimp import initialize_GIMP_lp_2d, update_GIMP_lp_2d
 
 
@@ -82,6 +82,10 @@ class quasi_static_solver_2d:
 		self.lame_mu = self.youngs_modulus / (2.0*(1.0+self.poisson_ratio))
 		self.material_name = material_dict['material_name']
 
+		if self.material_name=='J2':
+			self.kappa = material_dict['kappa']
+
+
 		# Loading
 		self.gravity_mag = load_dict['gravity_mag']
 		self.traction_value_x = load_dict['traction_value_x']
@@ -97,6 +101,7 @@ class quasi_static_solver_2d:
 		# ============ Warp arrays (particles) ============
 		particles_pos_np = init_particles_rectangle_2d(self.start_x, self.start_y, self.end_x, self.end_y, self.dx, self.n_grid_x, self.n_grid_y, self.PPD, self.n_particles)
 		self.x_particles = wp.from_numpy(particles_pos_np, dtype=wp.vec2d)
+		self.x0 = wp.from_numpy(particles_pos_np, dtype=wp.vec2d)
 		self.deformation_gradient_total_new = wp.array(shape=self.n_particles, dtype=wp.mat33d)
 		self.deformation_gradient_total_old = wp.array(shape=self.n_particles, dtype=wp.mat33d)
 		self.left_Cauchy_Green_new = wp.array(shape=self.n_particles, dtype=wp.mat33d)
@@ -151,8 +156,10 @@ class quasi_static_solver_2d:
 					wp.launch(kernel=assemble_residual_2d_hencky,
 							  dim=self.n_particles,
 							  inputs=[self.x_particles, self.dx, self.inv_dx, self.n_grid_x, self.n_nodes, self.increment_solution, self.deformation_gradient_total_old, self.deformation_gradient_total_new, self.left_Cauchy_Green_old, self.left_Cauchy_Green_new, self.particle_Cauchy_stress_array, self.gravity_mag, self.traction_value_x, self.traction_value_y, self.point_load_value_x, self.point_load_value_y, current_step, total_steps, self.lame_lambda, self.lame_mu, self.p_vol, self.p_rho, self.GIMP_lp, self.dofStruct.boundary_flag_array, self.dofStruct.activate_flag_array, self.rhs])
-				else:
-					pass # TODO: EXCEPTION
+				elif self.material_name=='J2':
+					wp.launch(kernel=assemble_residual_2d_J2,
+							  dim=self.n_particles,
+							  inputs=[self.x_particles, self.dx, self.inv_dx, self.n_grid_x, self.n_nodes, self.increment_solution, self.deformation_gradient_total_old, self.deformation_gradient_total_new, self.left_Cauchy_Green_old, self.left_Cauchy_Green_new, self.particle_Cauchy_stress_array, self.gravity_mag, self.traction_value_x, self.traction_value_y, self.point_load_value_x, self.point_load_value_y, current_step, total_steps, self.lame_lambda, self.lame_mu, self.kappa, self.p_vol, self.p_rho, self.GIMP_lp, self.dofStruct.boundary_flag_array, self.dofStruct.activate_flag_array, self.rhs])
 
 			# Assemble the sparse Jacobian matrix using automatic differentiation
 			# Sparse differentiation
