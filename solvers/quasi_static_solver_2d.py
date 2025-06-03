@@ -62,6 +62,10 @@ class quasi_static_solver_2d:
 		self.end_x = background_grid_dict['end_x']
 		self.start_y = background_grid_dict['start_y']
 		self.end_y = background_grid_dict['end_y']
+		self.domain_min_x = background_grid_dict['domain_min_x']
+		self.domain_max_x = background_grid_dict['domain_max_x']
+		self.domain_min_y = background_grid_dict['domain_min_y']
+		self.domain_max_y = background_grid_dict['domain_max_y']
 
 		# Particles
 		self.n_particles = particles_dict['n_particles']
@@ -108,6 +112,7 @@ class quasi_static_solver_2d:
 		self.left_Cauchy_Green_old = wp.array(shape=self.n_particles, dtype=wp.mat33d)
 		self.particle_Cauchy_stress_array = wp.array(shape=self.n_particles, dtype=wp.mat33d)
 		self.GIMP_lp = wp.array(shape=self.n_particles, dtype=wp.vec2d)
+		self.particle_external_flag_array = wp.array(shape=self.n_particles, dtype=wp.bool)
 
 		# ============ Warp arrays (grid and matrix system) ============
 		self.rhs = wp.zeros(shape=self.n_matrix_size, dtype=wp.float64, requires_grad=True)
@@ -155,11 +160,11 @@ class quasi_static_solver_2d:
 				if self.material_name=='Hencky elasticity':
 					wp.launch(kernel=assemble_residual_2d_hencky,
 							  dim=self.n_particles,
-							  inputs=[self.x_particles, self.dx, self.inv_dx, self.n_grid_x, self.n_nodes, self.increment_solution, self.deformation_gradient_total_old, self.deformation_gradient_total_new, self.left_Cauchy_Green_old, self.left_Cauchy_Green_new, self.particle_Cauchy_stress_array, self.gravity_mag, self.traction_value_x, self.traction_value_y, self.point_load_value_x, self.point_load_value_y, current_step, total_steps, self.lame_lambda, self.lame_mu, self.p_vol, self.p_rho, self.GIMP_lp, self.dofStruct.boundary_flag_array, self.dofStruct.activate_flag_array, self.rhs])
+							  inputs=[self.x_particles, self.dx, self.inv_dx, self.n_grid_x, self.n_nodes, self.increment_solution, self.deformation_gradient_total_old, self.deformation_gradient_total_new, self.left_Cauchy_Green_old, self.left_Cauchy_Green_new, self.particle_external_flag_array, self.particle_Cauchy_stress_array, self.gravity_mag, self.traction_value_x, self.traction_value_y, self.point_load_value_x, self.point_load_value_y, current_step, total_steps, self.lame_lambda, self.lame_mu, self.p_vol, self.p_rho, self.GIMP_lp, self.dofStruct.boundary_flag_array, self.dofStruct.activate_flag_array, self.rhs])
 				elif self.material_name=='J2':
 					wp.launch(kernel=assemble_residual_2d_J2,
 							  dim=self.n_particles,
-							  inputs=[self.x_particles, self.dx, self.inv_dx, self.n_grid_x, self.n_nodes, self.increment_solution, self.deformation_gradient_total_old, self.deformation_gradient_total_new, self.left_Cauchy_Green_old, self.left_Cauchy_Green_new, self.particle_Cauchy_stress_array, self.gravity_mag, self.traction_value_x, self.traction_value_y, self.point_load_value_x, self.point_load_value_y, current_step, total_steps, self.lame_lambda, self.lame_mu, self.kappa, self.p_vol, self.p_rho, self.GIMP_lp, self.dofStruct.boundary_flag_array, self.dofStruct.activate_flag_array, self.rhs])
+							  inputs=[self.x_particles, self.dx, self.inv_dx, self.n_grid_x, self.n_nodes, self.increment_solution, self.deformation_gradient_total_old, self.deformation_gradient_total_new, self.left_Cauchy_Green_old, self.left_Cauchy_Green_new, self.particle_external_flag_array, self.particle_Cauchy_stress_array, self.gravity_mag, self.traction_value_x, self.traction_value_y, self.point_load_value_x, self.point_load_value_y, current_step, total_steps, self.lame_lambda, self.lame_mu, self.kappa, self.p_vol, self.p_rho, self.GIMP_lp, self.dofStruct.boundary_flag_array, self.dofStruct.activate_flag_array, self.rhs])
 
 			# Assemble the sparse Jacobian matrix using automatic differentiation
 			# Sparse differentiation
@@ -250,7 +255,7 @@ class quasi_static_solver_2d:
 		# Update GIMP lps
 		wp.launch(kernel=update_GIMP_lp_2d,
 				  dim=self.n_particles,
-				  inputs=[self.deformation_gradient_total_new, self.GIMP_lp, self.GIMP_lp_initial, self.x_particles, self.start_x, self.end_x, self.start_y, self.end_y])
+				  inputs=[self.deformation_gradient_total_new, self.GIMP_lp, self.GIMP_lp_initial, self.x_particles, self.domain_min_x, self.domain_max_x, self.domain_min_y, self.domain_max_y])
 
 		
 

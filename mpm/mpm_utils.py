@@ -120,6 +120,7 @@ def assemble_residual_2d_hencky(x_particles: wp.array(dtype=wp.vec2d),
 							    deformation_gradient_total_new: wp.array(dtype=wp.mat33d),
 							    left_Cauchy_Green_old: wp.array(dtype=wp.mat33d),
 							    left_Cauchy_Green_new: wp.array(dtype=wp.mat33d),
+							    particle_external_flag_array: wp.array(dtype=wp.bool),
 							    particle_Cauchy_stress_array: wp.array(dtype=wp.mat33d),
 							    gravity_mag: wp.float64,
 							    traction_value_x: wp.float64,
@@ -260,6 +261,12 @@ def assemble_residual_2d_hencky(x_particles: wp.array(dtype=wp.vec2d),
 	new_p_rho = p_rho / particle_J
 
 
+	# Get external force
+	f_ext = wp.vec2d()
+	if particle_external_flag_array[p]==True:
+		f_ext = wp.vec2d(point_load_value_x*(current_step+float64_one)/total_steps, point_load_value_y*(current_step+float64_one)/total_steps)
+
+
 	# Residual term
 	for i in range(0, 3):
 		for j in range(0, 3):
@@ -274,7 +281,7 @@ def assemble_residual_2d_hencky(x_particles: wp.array(dtype=wp.vec2d),
 			index_ij_x = ix + iy*(n_grid_x + wp.int(1))
 			index_ij_y = index_ij_x + n_nodes
 
-			rhs_value = (-weight_grad @ particle_Cauchy_stress + weight * new_p_rho * standard_gravity) * new_p_vol # Updated Lagrangian
+			rhs_value = (-weight_grad @ particle_Cauchy_stress + weight * new_p_rho * standard_gravity) * new_p_vol + weight * f_ext # Updated Lagrangian
 
 
 
@@ -295,6 +302,7 @@ def assemble_residual_2d_J2(x_particles: wp.array(dtype=wp.vec2d),
 							deformation_gradient_total_new: wp.array(dtype=wp.mat33d),
 							left_Cauchy_Green_old: wp.array(dtype=wp.mat33d),
 							left_Cauchy_Green_new: wp.array(dtype=wp.mat33d),
+							particle_external_flag_array: wp.array(dtype=wp.bool),
 							particle_Cauchy_stress_array: wp.array(dtype=wp.mat33d),
 							gravity_mag: wp.float64,
 							traction_value_x: wp.float64,
@@ -436,6 +444,13 @@ def assemble_residual_2d_J2(x_particles: wp.array(dtype=wp.vec2d),
 	new_p_rho = p_rho / particle_J
 
 
+	# Get external force
+	f_ext = wp.vec2d()
+	if particle_external_flag_array[p]==True:
+		f_ext = wp.vec2d(point_load_value_x*(current_step+float64_one)/total_steps, point_load_value_y*(current_step+float64_one)/total_steps)
+
+
+
 	# Residual term
 	for i in range(0, 3):
 		for j in range(0, 3):
@@ -450,7 +465,7 @@ def assemble_residual_2d_J2(x_particles: wp.array(dtype=wp.vec2d),
 			index_ij_x = ix + iy*(n_grid_x + wp.int(1))
 			index_ij_y = index_ij_x + n_nodes
 
-			rhs_value = (-weight_grad @ particle_Cauchy_stress + weight * new_p_rho * standard_gravity) * new_p_vol # Updated Lagrangian
+			rhs_value = (-weight_grad @ particle_Cauchy_stress + weight * new_p_rho * standard_gravity) * new_p_vol + weight * f_ext  # Updated Lagrangian
 
 
 

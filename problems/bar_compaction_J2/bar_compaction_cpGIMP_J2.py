@@ -20,7 +20,12 @@ end_x = start_x + dx
 start_y = dx
 end_y = start_y + 50. # m
 
-background_grid_dict = {'n_grid_x': n_grid_x, 'n_grid_y': n_grid_y, 'max_x': max_x, 'dx': dx, 'start_x': start_x, 'end_x': end_x, 'start_y': start_y, 'end_y': end_y}
+domain_min_x = start_x
+domain_max_x = end_x
+domain_min_y = start_y
+domain_max_y = end_y
+
+background_grid_dict = {'n_grid_x': n_grid_x, 'n_grid_y': n_grid_y, 'max_x': max_x, 'dx': dx, 'start_x': start_x, 'end_x': end_x, 'start_y': start_y, 'end_y': end_y, 'domain_min_x': domain_min_x, 'domain_max_x': domain_max_x, 'domain_min_y': domain_min_y, 'domain_max_y': domain_max_y}
 
 # ============ Particles ============
 n_particles = 256 #16 #32 #64 #128 # #512 #1024 #2048 

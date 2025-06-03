@@ -68,17 +68,17 @@ def precompute_seed_vectors_2d(n_grid_x, n_grid_y, n_nodes, n_matrix_size, max_s
 
 @wp.kernel
 def from_jacobian_to_vector_parallel_2d(jacobian_wp: wp.array(dtype=wp.float64),
-									    rows: wp.array(dtype=wp.int32),
-									    cols: wp.array(dtype=wp.int32),
-									    vals: wp.array(dtype=wp.float64),
-									    n_grid_x: wp.int32,
-									    n_grid_y: wp.int32,
-									    n_nodes: wp.int32,
-									    n_matrix_size: wp.int32,
-									    selector_wp: wp.array(dtype=wp.int32),
-									    boundary_flag_array: wp.array(dtype=wp.bool),
-									    activated_flag_array: wp.array(dtype=wp.bool)
-									    ):
+										rows: wp.array(dtype=wp.int32),
+										cols: wp.array(dtype=wp.int32),
+										vals: wp.array(dtype=wp.float64),
+										n_grid_x: wp.int32,
+										n_grid_y: wp.int32,
+										n_nodes: wp.int32,
+										n_matrix_size: wp.int32,
+										selector_wp: wp.array(dtype=wp.int32),
+										boundary_flag_array: wp.array(dtype=wp.bool),
+										activated_flag_array: wp.array(dtype=wp.bool)
+										):
 	
 	selector_index = wp.tid()
 

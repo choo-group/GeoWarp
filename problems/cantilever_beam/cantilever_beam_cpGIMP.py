@@ -10,53 +10,58 @@ import meshio
 
 
 # ============ Background grid ============
-n_grid_x = 6 
-n_grid_y = 66 #6 #10 #18 #34 # #130 #258 #514 
-max_x = 4.6875 #75. #37.5 #18.75 #9.375 # #2.34375 #1.171875 #0.5859375 # m
-dx = max_x/n_grid_x 
+n_grid_x = 60
+n_grid_y = 60
+max_x = 15.0 # m
+max_y = 15.0 # m
+dx = max_x/n_grid_x # 0.25 m
+
+l0 = 10.0 # m
+d0 = 1.0 # m
 
 start_x = dx 
-end_x = start_x + dx
-start_y = dx
-end_y = start_y + 50. # m
+end_x = start_x + l0
+start_y = l0 - d0
+end_y = l0
 
 domain_min_x = start_x
-domain_max_x = end_x
-domain_min_y = start_y
-domain_max_y = end_y
+domain_max_x = max_x - dx
+domain_min_y = dx
+domain_max_y = max_y - dx
 
 background_grid_dict = {'n_grid_x': n_grid_x, 'n_grid_y': n_grid_y, 'max_x': max_x, 'dx': dx, 'start_x': start_x, 'end_x': end_x, 'start_y': start_y, 'end_y': end_y, 'domain_min_x': domain_min_x, 'domain_max_x': domain_max_x, 'domain_min_y': domain_min_y, 'domain_max_y': domain_max_y}
 
 # ============ Particles ============
-n_particles = 256 #16 #32 #64 #128 # #512 #1024 #2048 
-PPD = 2 # particles per direction
+n_particles = 5760
+PPD = 6 # particles per direction
 p_vol = (dx/PPD)**2 
-p_rho = 0.08 # t/m^3
+p_rho = 1.0 # t/m^3
 
 particles_dict = {'n_particles': n_particles, 'PPD': PPD, 'p_vol': p_vol, 'p_rho': p_rho}
 
 # ============ Newton iteration ============
 n_iter = 10
 tol = 1e-8
-solver_name = 'warp' #'scipy' #'pyamg'
+solver_name = 'pyamg' #'scipy' #'warp'
 
 iteration_dict = {'n_iter': n_iter, 'tol': tol, 'solver_name': solver_name}
 
 # ============ Material properties ============
-youngs_modulus = 10 # kPa
-poisson_ratio = 0.0
+youngs_modulus = 12000.0 # kPa
+poisson_ratio = 0.2
+
 material_name = 'Hencky elasticity'
 
 material_dict = {'youngs_modulus': youngs_modulus, 'poisson_ratio': poisson_ratio, 'material_name': material_name}
 
 # ============ Loading ============
-gravity_mag = 10.0
+gravity_mag = 0.0
 
 traction_value_x = 0.
 traction_value_y = 0.
 
 point_load_value_x = 0.
-point_load_value_y = 0.
+point_load_value_y = -50.0
 
 load_dict = {'gravity_mag': gravity_mag, 'traction_value_x': traction_value_x, 'traction_value_y': traction_value_y, 'point_load_value_x': point_load_value_x, 'point_load_value_y': point_load_value_y}
 
@@ -64,7 +69,7 @@ load_dict = {'gravity_mag': gravity_mag, 'traction_value_x': traction_value_x, '
 # ============ Print problem information ============
 print("=" * 72)
 print("  PROBLEM DESCRIPTION")
-print("    Problem name       :: Bar compaction\n")
+print("    Problem name       :: Cantilever beam\n")
 
 print("  MPM SETUP")
 print(f"    Nodes number       :: {n_grid_x+1} x {n_grid_y+1}")
@@ -93,19 +98,39 @@ print("=" * 72)
 @wp.kernel
 def set_boundary_dofs(boundary_flag_array: wp.array(dtype=wp.bool),
 					  n_grid_x: wp.int32,
-					  n_nodes: wp.int32
+					  n_nodes: wp.int32,
+					  end_y: wp.float64,
+					  d0: wp.float64,
+					  dx: wp.float64
 					  ):
 	
 	node_idx, node_idy = wp.tid()
 	dof_x = node_idx + node_idy*(n_grid_x + 1)
 	dof_y = dof_x + n_nodes
 
-	if node_idx<=1 or node_idx>=2:
+	if node_idx<=1:
 		boundary_flag_array[dof_x] = True
 
-	if node_idy<=1:
+	if node_idx<=1 and node_idy==wp.int((end_y-d0/wp.float64(2.)+wp.float64(0.5)*dx)/dx):
 		boundary_flag_array[dof_y] = True
 
+
+@wp.kernel
+def set_external_force_flag(x_particles: wp.array(dtype=wp.vec2d),
+							particle_external_flag_array: wp.array(dtype=wp.bool),
+							start_x: wp.float64,
+							start_y: wp.float64,
+							dx: wp.float64,
+							PPD: wp.float64,
+							l0: wp.float64,
+							d0: wp.float64):
+	p = wp.tid()
+
+	this_particle = x_particles[p]
+
+	if this_particle[0]>start_x+l0-dx/PPD:
+		if this_particle[1]>l0-d0/wp.float64(2.)-dx/PPD and this_particle[1]<l0-d0/wp.float64(2.)+dx/PPD:
+			particle_external_flag_array[p] = True
 
 # ============ Initialize the solver ============
 solver = quasi_static_solver_2d(background_grid_dict=background_grid_dict,
@@ -118,20 +143,26 @@ solver = quasi_static_solver_2d(background_grid_dict=background_grid_dict,
 # ============ Specify Dirichlet boundary conditions ============
 wp.launch(kernel=set_boundary_dofs,
 		  dim=(solver.n_grid_x+1, solver.n_grid_y+1),
-		  inputs=[solver.dofStruct.boundary_flag_array, solver.n_grid_x, solver.n_nodes])
+		  inputs=[solver.dofStruct.boundary_flag_array, solver.n_grid_x, solver.n_nodes, solver.end_y, d0, solver.dx])
+
+# ============ Specify external force flag ============
+wp.launch(kernel=set_external_force_flag,
+		  dim=solver.n_particles,
+		  inputs=[solver.x_particles, solver.particle_external_flag_array, start_x, start_y, dx, PPD, l0, d0])
 
 # ============ Post-processing for the initial step ============
 x_numpy = np.array(solver.x_particles.numpy())
-output_particles = meshio.Mesh(points=x_numpy, cells=[], point_data={'stress_yy': solver.particle_Cauchy_stress_array.numpy()[:,1,1]})
-output_particles.write("./vtk/bar_compaction_particles_%d.vtk" % 0)
+output_particles = meshio.Mesh(points=x_numpy, cells=[], point_data={'stress_xx': solver.particle_Cauchy_stress_array.numpy()[:,0,0], 'stress_yy': solver.particle_Cauchy_stress_array.numpy()[:,1,1]})
+output_particles.write("./vtk/cantilever_beam_particles_%d.vtk" % 0)
 
 # ============ Load steps ============
-n_steps = 40
+n_steps = 50
 for step in range(n_steps):
 	print('Load step', step)
 	solver.advance_one_step(step, n_steps)
 
 	# Post-processing
 	x_numpy = np.array(solver.x_particles.numpy())
-	output_particles = meshio.Mesh(points=x_numpy, cells=[], point_data={'stress_yy': solver.particle_Cauchy_stress_array.numpy()[:,1,1]})
-	output_particles.write("./vtk/bar_compaction_particles_%d.vtk" % (step+1))
+	output_particles = meshio.Mesh(points=x_numpy, cells=[], point_data={'stress_xx': solver.particle_Cauchy_stress_array.numpy()[:,0,0], 'stress_yy': solver.particle_Cauchy_stress_array.numpy()[:,1,1]})
+	output_particles.write("./vtk/cantilever_beam_particles_%d.vtk" % (step+1))
+
