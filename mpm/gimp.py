@@ -18,8 +18,6 @@ def initialize_GIMP_lp_2d(GIMP_lp: wp.array(dtype=wp.vec2d),
 def get_GIMP_shape_function_and_gradient_2d(xp: wp.vec2d,
 											dx: wp.float64,
 											inv_dx: wp.float64,
-											n_grid_x: wp.int32,
-											n_nodes: wp.int32,
 											lpx: wp.float64, 
 											lpy: wp.float64
 											):
@@ -63,13 +61,6 @@ def get_GIMP_shape_function_and_gradient_2d(xp: wp.vec2d,
 		wx1 = fx[0]
 		grad_wx0 = -wp.float64(1.0) * inv_dx
 		grad_wx1 = inv_dx
-
-		index_right_bottom_x = left_bottom_corner_base_int[0] + wp.int(2) + left_bottom_corner_base_int[1]*(n_grid_x + wp.int(1))
-		index_right_bottom_y = index_right_bottom_x + n_nodes
-		index_right_middle_x = left_bottom_corner_base_int[0] + wp.int(2) + (left_bottom_corner_base_int[1]+wp.int(1))*(n_grid_x + wp.int(1))
-		index_right_middle_y = index_right_middle_x + n_nodes
-		index_right_top_x    = left_bottom_corner_base_int[0] + wp.int(2) + (left_bottom_corner_base_int[1]+wp.int(2))*(n_grid_x + wp.int(1))
-		index_right_top_y    = index_right_top_x + n_nodes
 	else:
 		# the particle will influence 2 elements in the x direction
 		# shape function & gradient
@@ -93,13 +84,6 @@ def get_GIMP_shape_function_and_gradient_2d(xp: wp.vec2d,
 		wy1 = fx[1]
 		grad_wy0 = -wp.float64(1.0) * inv_dx
 		grad_wy1 = inv_dx
-
-		index_top_left_x = left_bottom_corner_base_int[0] + (left_bottom_corner_base_int[1]+wp.int(2))*(n_grid_x + wp.int(1))
-		index_top_left_y = index_top_left_x + n_nodes
-		index_top_middle_x = left_bottom_corner_base_int[0] + wp.int(1) + (left_bottom_corner_base_int[1]+wp.int(2))*(n_grid_x + wp.int(1))
-		index_top_middle_y = index_top_middle_x + n_nodes
-		index_top_right_x = left_bottom_corner_base_int[0] + wp.int(2) + (left_bottom_corner_base_int[1]+wp.int(2))*(n_grid_x + wp.int(1))
-		index_top_right_y = index_top_right_x + n_nodes
 	else:
 		# the particle will influence 2 elements in the y direction
 		# shape function & gradient
@@ -118,6 +102,88 @@ def get_GIMP_shape_function_and_gradient_2d(xp: wp.vec2d,
 
 
 	return wp.vector(wx0, wy0, wx1, wy1, wx2, wy2, grad_wx0, grad_wy0, grad_wx1, grad_wy1, grad_wx2, grad_wy2)
+
+
+@wp.func
+def get_GIMP_shape_function_and_gradient_avg_2d(xp: wp.vec2d,
+												dx: wp.float64,
+												inv_dx: wp.float64,
+												lpx: wp.float64, 
+												lpy: wp.float64
+												):
+	left_bottom_corner = xp - wp.vec2d(lpx, lpy)
+	left_bottom_corner_base_x = left_bottom_corner[0]*inv_dx + wp.float64(1e-8)
+	left_bottom_corner_base_y = left_bottom_corner[1]*inv_dx + wp.float64(1e-8)
+	left_bottom_corner_base_int = wp.vector(wp.int(left_bottom_corner_base_x), wp.int(left_bottom_corner_base_y))
+	left_bottom_corner_base = wp.vector(wp.float64(left_bottom_corner_base_int[0]), wp.float64(left_bottom_corner_base_int[1]))
+
+	right_up_corner = xp + wp.vec2d(lpx, lpy)
+	right_up_corner_base_x = right_up_corner[0]*inv_dx + wp.float64(1e-8)
+	right_up_corner_base_y = right_up_corner[1]*inv_dx + wp.float64(1e-8)
+	right_up_corner_base_int = wp.vector(wp.int(right_up_corner_base_x), wp.int(right_up_corner_base_y))
+	right_up_corner_base = wp.vector(wp.float64(right_up_corner_base_int[0]), wp.float64(right_up_corner_base_int[1]))
+
+
+	base_x = xp[0]*inv_dx + wp.float64(1e-8)
+	base_y = xp[1]*inv_dx + wp.float64(1e-8)
+	base_int = wp.vector(wp.int(base_x), wp.int(base_y))
+	base = wp.vector(wp.float64(base_int[0]), wp.float64(base_int[1]))
+
+	fx = xp * inv_dx - base
+
+
+	# Declare shape function components and gradient components
+	wx0 = wp.float64(0.0)
+	wy0 = wp.float64(0.0)
+	wx1 = wp.float64(0.0)
+	wy1 = wp.float64(0.0)
+	wx2 = wp.float64(0.0)
+	wy2 = wp.float64(0.0)
+	grad_wx0 = wp.float64(0.0)
+	grad_wy0 = wp.float64(0.0)
+	grad_wx1 = wp.float64(0.0)
+	grad_wy1 = wp.float64(0.0)
+	grad_wx2 = wp.float64(0.0)
+	grad_wy2 = wp.float64(0.0)
+	if right_up_corner_base_int[0]==left_bottom_corner_base_int[0]:
+		wx0 = wp.float64(0.5)
+		wx1 = wp.float64(0.5)
+	else:
+		# the particle will influence 2 elements in the x direction
+		# shape function & gradient
+		# Refer to section 2.4.2 of [Coombs, et al.]
+		x_0 = (left_bottom_corner_base[0]) * dx
+		wx0 = (dx+lpx-wp.abs(xp[0]-x_0))/(wp.float64(4.0)*lpx)
+		grad_wx0 = wp.float64(-1.0)/(wp.float64(4.0)*lpx) * wp.sign(xp[0]-x_0)
+
+		wx1 = wp.float64(0.5) 
+
+		x_2 = (left_bottom_corner_base[0] + wp.float64(2)) * dx
+		wx2 = (dx+lpx-wp.abs(xp[0]-x_2))/(wp.float64(4.0)*lpx)
+		grad_wx2 = wp.float64(-1.0)/(wp.float64(4.0)*lpx) * wp.sign(xp[0]-x_2)
+
+
+	# get shape function y
+	if right_up_corner_base_int[1]==left_bottom_corner_base_int[1]:
+		wy0 = wp.float64(0.5)
+		wy1 = wp.float64(0.5)
+	else:
+		# the particle will influence 2 elements in the y direction
+		# shape function & gradient
+		y_0 = (left_bottom_corner_base[1]) * dx
+		wy0 = (dx+lpy-wp.abs(xp[1]-y_0))/(wp.float64(4.0)*lpy)
+		grad_wy0 = wp.float64(-1.0)/(wp.float64(4.0)*lpy) * wp.sign(xp[1]-y_0)
+
+		wy1 = wp.float64(0.5)
+
+		y_2 = (left_bottom_corner_base[1] + wp.float64(2)) * dx
+		wy2 = (dx+lpy-wp.abs(xp[1]-y_2))/(wp.float64(4.0)*lpy)
+		grad_wy2 = wp.float64(-1.0)/(wp.float64(4.0)*lpy) * wp.sign(xp[1]-y_2)
+
+
+
+	return wp.vector(wx0, wy0, wx1, wy1, wx2, wy2, grad_wx0, grad_wy0, grad_wx1, grad_wy1, grad_wx2, grad_wy2)
+
 
 
 @wp.kernel
