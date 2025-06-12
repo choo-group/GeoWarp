@@ -48,7 +48,7 @@ PPD = 4 # particle per direction
 GIMP_lp_initial = dx/PPD/2.0 
 
 
-youngs_modulus = 1e3 #1e4 # kPa
+youngs_modulus = 1e4 #1e3 # kPa
 poisson_ratio = 0.3
 lame_mu = youngs_modulus / (2.0*(1.0+poisson_ratio))
 lame_lambda = youngs_modulus*poisson_ratio / ((1.0+poisson_ratio) * (1.0-2.0*poisson_ratio))

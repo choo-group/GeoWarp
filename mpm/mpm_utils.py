@@ -5,7 +5,7 @@ import warp as wp
 import numpy as np
 
 
-from mpm.gimp import get_GIMP_shape_function_and_gradient_2d, get_GIMP_shape_function_and_gradient_avg_2d
+from mpm.gimp import get_GIMP_shape_function_and_gradient_2d, get_GIMP_shape_function_and_gradient_avg_2d, get_GIMP_shape_function_and_gradient_3d, get_GIMP_shape_function_and_gradient_avg_3d
 from materials.plasticity import return_mapping_J2
 
 
@@ -15,10 +15,10 @@ def init_particles_rectangle_2d(start_x, start_y, end_x, end_y, dx, n_grid_x, n_
 
 	for i in range(n_grid_x):
 		for j in range(n_grid_y):
-			potential_pos = np.array([(i+0.5)*dx, (j+0.5)*dx])
+			cell_center_pos = np.array([(i+0.5)*dx, (j+0.5)*dx])
 
-			if start_x < potential_pos[0] and potential_pos[0] < end_x:
-				if start_y < potential_pos[1] and potential_pos[1] < end_y:
+			if start_x < cell_center_pos[0] and cell_center_pos[0] < end_x:
+				if start_y < cell_center_pos[1] and cell_center_pos[1] < end_y:
 					for p_x in range(PPD):
 						for p_y in range(PPD):
 							particle_pos_np[particle_id] = np.array([i*dx, j*dx]) + np.array([(0.5+p_x)*dx/PPD, (0.5+p_y)*dx/PPD])
@@ -28,13 +28,33 @@ def init_particles_rectangle_2d(start_x, start_y, end_x, end_y, dx, n_grid_x, n_
 	print(particle_id)
 	return particle_pos_np
 
+def init_particles_rectangle_3d(start_x, start_y, start_z, end_x, end_y, end_z, dx, n_grid_x, n_grid_y, n_grid_z, PPD, n_particles):
+	particle_id = 0
+	particle_pos_np = np.zeros((n_particles, 3))
+
+	for i in range(n_grid_x):
+		for j in range(n_grid_y):
+			for k in range(n_grid_z):
+				cell_center_pos = np.array([(i+0.5)*dx, (j+0.5)*dx, (k+0.5)*dx])
+
+				if start_x < cell_center_pos[0] and cell_center_pos[0] < end_x:
+					if start_y < cell_center_pos[1] and cell_center_pos[1] < end_y:
+						if start_z < cell_center_pos[2] and cell_center_pos[2] < end_z:
+							for p_x in range(PPD):
+								for p_y in range(PPD):
+									for p_z in range(PPD):
+										particle_pos_np[particle_id] = np.array([i*dx, j*dx, k*dx]) + np.array([(0.5+p_x)*dx/PPD, (0.5+p_y)*dx/PPD, (0.5+p_z)*dx/PPD])
+
+										particle_id += 1
+
+	print(particle_id)
+	return particle_pos_np
 
 @wp.kernel
 def initialization(deformation_gradient_total_new: wp.array(dtype=wp.mat33d),
 				   deformation_gradient_total_old: wp.array(dtype=wp.mat33d),
 				   left_Cauchy_Green_new: wp.array(dtype=wp.mat33d),
-				   left_Cauchy_Green_old: wp.array(dtype=wp.mat33d),
-				   x_particles: wp.array(dtype=wp.vec2d)
+				   left_Cauchy_Green_old: wp.array(dtype=wp.mat33d)
 				   ):
 	p = wp.tid()
 
@@ -53,6 +73,12 @@ def initialization(deformation_gradient_total_new: wp.array(dtype=wp.mat33d),
 	left_Cauchy_Green_new[p] = identity_matrix
 	left_Cauchy_Green_old[p] = identity_matrix
 
+
+@wp.kernel
+def initialize_youngs_modulus_diff(youngs_modulus_diff: wp.array(dtype=wp.float64),
+								   youngs_modulus: wp.float64
+								   ):
+	youngs_modulus_diff[0] = youngs_modulus
 
 @wp.kernel
 def P2G_2d(x_particles: wp.array(dtype=wp.vec2d),
@@ -230,6 +256,133 @@ def P2G_coupled_2d(x_particles: wp.array(dtype=wp.vec2d),
 					cols_P2G[p*81 + (3*j+i)*9 + (3*jj+ii)] = index_iijj_scalar
 					vals_P2G[p*81 + (3*j+i)*9 + (3*jj+ii)] = weight * weight_iijj * p_mass
 
+@wp.kernel
+def P2G_coupled_3d(x_particles: wp.array(dtype=wp.vec3d),
+				   inv_dx: wp.float64,
+				   dx: wp.float64,
+				   inv_dy: wp.float64,
+				   dy: wp.float64,
+				   inv_dz: wp.float64,
+				   dz: wp.float64,
+				   n_grid_x: wp.int32,
+				   n_grid_y: wp.int32,
+				   n_nodes: wp.int32,
+				   boundary_flag_array: wp.array(dtype=wp.bool),
+				   activate_flag_array: wp.array(dtype=wp.bool),
+				   GIMP_lp: wp.array(dtype=wp.vec3d),
+				   particle_pressure_boundary_flag_array: wp.array(dtype=wp.bool),
+				   p_mass: wp.float64,
+				   particle_pressure_array: wp.array(dtype=wp.float64),
+				   rhs_P2G: wp.array(dtype=wp.float64),
+				   rows_P2G: wp.array(dtype=wp.int32),
+				   cols_P2G: wp.array(dtype=wp.int32),
+				   vals_P2G: wp.array(dtype=wp.float64)
+				   ):
+	p = wp.tid()
+
+	float64_one = wp.float64(1.0)
+	float64_zero = wp.float64(0.0)
+
+
+	lpx = GIMP_lp[p][0]
+	lpy = GIMP_lp[p][1]
+	lpz = GIMP_lp[p][2]
+
+	# GIMP
+	bottom_corner = x_particles[p] - wp.vec3d(lpx, lpy, lpz)
+	bottom_corner_base_x = bottom_corner[0]*inv_dx + wp.float64(1e-8)
+	bottom_corner_base_y = bottom_corner[1]*inv_dy + wp.float64(1e-8)
+	bottom_corner_base_z = bottom_corner[2]*inv_dz + wp.float64(1e-8)
+	bottom_corner_base_int = wp.vector(wp.int(bottom_corner_base_x), wp.int(bottom_corner_base_y), wp.int(bottom_corner_base_z))
+	bottom_corner_base = wp.vector(wp.float64(bottom_corner_base_int[0]), wp.float64(bottom_corner_base_int[1]), wp.float64(bottom_corner_base_int[2]))
+
+	up_corner = x_particles[p] + wp.vec3d(lpx, lpy, lpz)
+	up_corner_base_x = up_corner[0]*inv_dx + wp.float64(1e-8)
+	up_corner_base_y = up_corner[1]*inv_dy + wp.float64(1e-8)
+	up_corner_base_z = up_corner[2]*inv_dz + wp.float64(1e-8)
+	up_corner_base_int = wp.vec3i(wp.int(up_corner_base_x), wp.int(up_corner_base_y), wp.int(up_corner_base_z))
+	up_corner_base = wp.vec3d(wp.float64(up_corner_base_int[0]), wp.float64(up_corner_base_int[1]), wp.float64(up_corner_base_int[2]))
+
+	# Shape function
+	GIMP_shape_function_and_gradient_components = get_GIMP_shape_function_and_gradient_3d(x_particles[p], dx, dy, dz, inv_dx, inv_dy, inv_dz, lpx, lpy, lpz)
+	wx0 = GIMP_shape_function_and_gradient_components[0]
+	wy0 = GIMP_shape_function_and_gradient_components[1]
+	wz0 = GIMP_shape_function_and_gradient_components[2]
+	wx1 = GIMP_shape_function_and_gradient_components[3]
+	wy1 = GIMP_shape_function_and_gradient_components[4]
+	wz1 = GIMP_shape_function_and_gradient_components[5]
+	wx2 = GIMP_shape_function_and_gradient_components[6]
+	wy2 = GIMP_shape_function_and_gradient_components[7]
+	wz2 = GIMP_shape_function_and_gradient_components[8]
+	
+	w = wp.matrix(
+		wx0, wy0, wz0,
+		wx1, wy1, wz1,
+		wx2, wy2, wz2,
+		shape=(3,3)
+		)
+
+	# Loop on grid nodes
+	# Flattened loop
+	for flattened_id in range(27):
+		i = wp.int(flattened_id/9)
+		j = wp.mod(wp.int(flattened_id/3), 3)
+		k = wp.mod(flattened_id, 3)
+
+		ix = bottom_corner_base_int[0] + i
+		iy = bottom_corner_base_int[1] + j
+		iz = bottom_corner_base_int[2] + k
+
+		index_ij_x = ix + iy*(n_grid_x+1) + iz*((n_grid_x+1)*(n_grid_y+1))
+		index_ij_y = index_ij_x + n_nodes
+		index_ij_z = index_ij_x + 2*n_nodes
+		index_ij_p = index_ij_x + 3*n_nodes
+
+		weight = w[i][0] * w[j][1] * w[k][2]
+
+		if weight>wp.float64(1e-7):
+			activate_flag_array[index_ij_x] = True
+			activate_flag_array[index_ij_y] = True
+			activate_flag_array[index_ij_z] = True
+			activate_flag_array[index_ij_p] = True
+
+		if particle_pressure_boundary_flag_array[p]==True:
+			node_pos = wp.vec3d(wp.float64(ix)*dx, wp.float64(iy)*dy, wp.float64(iz)*dz)
+			if node_pos[2] >= x_particles[p][2]:
+				boundary_flag_array[index_ij_p] = True
+
+	# Pressure consistent P2G
+	for flattened_id in range(729):
+		i = flattened_id / 243
+		j = wp.mod(flattened_id/81, 3)
+		k = wp.mod(flattened_id/27, 3)
+		ii = wp.mod(flattened_id/9, 3)
+		jj = wp.mod(flattened_id/3, 3)
+		kk = wp.mod(flattened_id, 3)
+
+		weight = w[i][0] * w[j][1] * w[k][2]
+		ix = bottom_corner_base_int[0] + i
+		jy = bottom_corner_base_int[1] + j
+		kz = bottom_corner_base_int[2] + k
+
+		index_ij_scalar = ix + jy*(n_grid_x+1) + kz*((n_grid_x+1)*(n_grid_y+1))
+		index_ij_p = index_ij_scalar + 3*n_nodes
+
+		weight_iijj = w[ii][0] * w[jj][1] * w[kk][2]
+		iix = bottom_corner_base_int[0] + ii
+		jjy = bottom_corner_base_int[1] + jj
+		kkz = bottom_corner_base_int[2] + kk
+
+		index_iijj_scalar = iix + jjy*(n_grid_x+1) + kkz*((n_grid_x+1)*(n_grid_y+1))
+		index_iijj_p = index_iijj_scalar + 3*n_nodes
+
+		wp.atomic_add(rhs_P2G, index_ij_scalar, weight * weight_iijj * p_mass * particle_pressure_array[p])
+
+		rows_P2G[p*27*27 + (i+j*3+k*9)*27 + (ii+jj*3+kk*9)] = index_ij_scalar
+		cols_P2G[p*27*27 + (i+j*3+k*9)*27 + (ii+jj*3+kk*9)] = index_iijj_scalar
+		vals_P2G[p*27*27 + (i+j*3+k*9)*27 + (ii+jj*3+kk*9)] = weight * weight_iijj * p_mass
+
+
 
 @wp.kernel
 def P2G_set_nodal_solution(boundary_flag_array: wp.array(dtype=wp.bool),
@@ -242,6 +395,21 @@ def P2G_set_nodal_solution(boundary_flag_array: wp.array(dtype=wp.bool),
 	dof_p = dof_scalar + 2*n_nodes
 
 	if boundary_flag_array[dof_p]==False:
+		old_solution[dof_p] = x_P2G_warp[dof_scalar]
+		new_solution[dof_p] = x_P2G_warp[dof_scalar]
+
+@wp.kernel
+def P2G_set_nodal_solution_3d(boundary_flag_array: wp.array(dtype=wp.bool),
+							  activate_flag_array: wp.array(dtype=wp.bool),
+							  n_nodes: wp.int32,
+							  old_solution: wp.array(dtype=wp.float64),
+							  new_solution: wp.array(dtype=wp.float64),
+							  x_P2G_warp: wp.array(dtype=wp.float64)
+							  ):
+	dof_scalar = wp.tid()
+	dof_p = dof_scalar + 3*n_nodes
+
+	if boundary_flag_array[dof_p]==False and activate_flag_array[dof_p]==True:
 		old_solution[dof_p] = x_P2G_warp[dof_scalar]
 		new_solution[dof_p] = x_P2G_warp[dof_scalar]
 
@@ -849,6 +1017,284 @@ def assemble_residual_coupled_2d_neohookean(x_particles: wp.array(dtype=wp.vec2d
 				wp.atomic_add(rhs, index_ij_p, rhs_ppp)
 
 
+@wp.kernel
+def assemble_residual_coupled_3d_neohookean(x_particles: wp.array(dtype=wp.vec3d),
+											dx: wp.float64,
+											dy: wp.float64,
+											dz: wp.float64,
+											inv_dx: wp.float64,
+											inv_dy: wp.float64,
+											inv_dz: wp.float64,
+											dt: wp.float64,
+											n_grid_x: wp.int32,
+											n_grid_y: wp.int32,
+											n_nodes: wp.int32,
+											PPD: wp.float64,
+											old_solution: wp.array(dtype=wp.float64),
+											new_solution: wp.array(dtype=wp.float64),
+											deformation_gradient_total_old: wp.array(dtype=wp.mat33d),
+											deformation_gradient_total_new: wp.array(dtype=wp.mat33d),
+											left_Cauchy_Green_old: wp.array(dtype=wp.mat33d),
+											left_Cauchy_Green_new: wp.array(dtype=wp.mat33d),
+											particle_external_flag_array: wp.array(dtype=wp.bool),
+											particle_traction_flag_array: wp.array(dtype=wp.bool),
+											particle_Cauchy_stress_array: wp.array(dtype=wp.mat33d),
+											phi_initial: wp.float64,
+											mobility_constant: wp.float64,
+											gravity_mag: wp.float64,
+											traction_value_x: wp.float64,
+											traction_value_y: wp.float64,
+											traction_value_z: wp.float64,
+											point_load_value_x: wp.float64,
+											point_load_value_y: wp.float64,
+											point_load_value_z: wp.float64,
+											footing_region_min_x: wp.float64,
+											footing_region_max_x: wp.float64,
+											footing_region_min_y: wp.float64,
+											footing_region_max_y: wp.float64,
+											footing_initial_height: wp.float64,
+											footing_incr_disp: wp.float64,
+											penalty_factor: wp.float64,
+											current_step: wp.float64,
+											total_steps: wp.float64,
+											youngs_modulus_diff: wp.array(dtype=wp.float64),
+											poisson_ratio: wp.float64,
+											p_vol: wp.float64,
+											p_rho: wp.float64,
+											GIMP_lp: wp.array(dtype=wp.vec3d),
+											boundary_flag_array: wp.array(dtype=wp.bool),
+											activate_flag_array: wp.array(dtype=wp.bool),
+											rhs: wp.array(dtype=wp.float64),
+											indentation_force: wp.array(dtype=wp.float64),
+											indentation_force_array: wp.array(dtype=wp.float64)
+											):
+	p = wp.tid()
+
+	float64_one = wp.float64(1.0)
+	float64_zero = wp.float64(0.0)
+
+	lame_lambda = youngs_modulus_diff[0]*poisson_ratio / ((wp.float64(1.0)+poisson_ratio) * (wp.float64(1.0)-wp.float64(2.0)*poisson_ratio))
+	lame_mu = youngs_modulus_diff[0] / (wp.float64(2.0)*(wp.float64(1.0)+poisson_ratio))
+
+	standard_gravity = wp.vec3d(float64_zero, float64_zero, -gravity_mag*(current_step+float64_one)/total_steps)
+
+	lpx = GIMP_lp[p][0]
+	lpy = GIMP_lp[p][1]
+	lpz = GIMP_lp[p][2]
+
+	# Calculate shape functions
+	# GIMP
+	xp = x_particles[p]
+	bottom_corner = xp - wp.vec3d(lpx, lpy, lpz)
+	bottom_corner_base_x = bottom_corner[0]*inv_dx + wp.float64(1e-8)
+	bottom_corner_base_y = bottom_corner[1]*inv_dy + wp.float64(1e-8)
+	bottom_corner_base_z = bottom_corner[2]*inv_dz + wp.float64(1e-8)
+	bottom_corner_base_int = wp.vec3i(wp.int(bottom_corner_base_x), wp.int(bottom_corner_base_y), wp.int(bottom_corner_base_z))
+	bottom_corner_base = wp.vec3d(wp.float64(bottom_corner_base_int[0]), wp.float64(bottom_corner_base_int[1]), wp.float64(bottom_corner_base_int[2]))
+
+	up_corner = xp + wp.vec3d(lpx, lpy, lpz)
+	up_corner_base_x = up_corner[0]*inv_dx + wp.float64(1e-8)
+	up_corner_base_y = up_corner[1]*inv_dy + wp.float64(1e-8)
+	up_corner_base_z = up_corner[2]*inv_dz + wp.float64(1e-8)
+	up_corner_base_int = wp.vec3i(wp.int(up_corner_base_x), wp.int(up_corner_base_y), wp.int(up_corner_base_z))
+	up_corner_base = wp.vec3d(wp.float64(up_corner_base_int[0]), wp.float64(up_corner_base_int[1]), wp.float64(up_corner_base_int[2]))
+
+	GIMP_shape_function_and_gradient_components = get_GIMP_shape_function_and_gradient_3d(x_particles[p], dx, dy, dz, inv_dx, inv_dy, inv_dz, lpx, lpy, lpz)
+	wx0 = GIMP_shape_function_and_gradient_components[0]
+	wy0 = GIMP_shape_function_and_gradient_components[1]
+	wz0 = GIMP_shape_function_and_gradient_components[2]
+	wx1 = GIMP_shape_function_and_gradient_components[3]
+	wy1 = GIMP_shape_function_and_gradient_components[4]
+	wz1 = GIMP_shape_function_and_gradient_components[5]
+	wx2 = GIMP_shape_function_and_gradient_components[6]
+	wy2 = GIMP_shape_function_and_gradient_components[7]
+	wz2 = GIMP_shape_function_and_gradient_components[8]
+	grad_wx0 = GIMP_shape_function_and_gradient_components[9]
+	grad_wy0 = GIMP_shape_function_and_gradient_components[10]
+	grad_wz0 = GIMP_shape_function_and_gradient_components[11]
+	grad_wx1 = GIMP_shape_function_and_gradient_components[12]
+	grad_wy1 = GIMP_shape_function_and_gradient_components[13]
+	grad_wz1 = GIMP_shape_function_and_gradient_components[14]
+	grad_wx2 = GIMP_shape_function_and_gradient_components[15]
+	grad_wy2 = GIMP_shape_function_and_gradient_components[16]
+	grad_wz2 = GIMP_shape_function_and_gradient_components[17]
+
+	w = wp.matrix(
+		wx0, wy0, wz0,
+		wx1, wy1, wz1,
+		wx2, wy2, wz2,
+		shape=(3,3)
+		)
+
+	grad_w = wp.matrix(
+		grad_wx0, grad_wy0, grad_wz0,
+		grad_wx1, grad_wy1, grad_wz1,
+		grad_wx2, grad_wy2, grad_wz2,
+		shape=(3,3)
+		)
+
+	GIMP_shape_function_and_gradient_components_avg = get_GIMP_shape_function_and_gradient_avg_3d(xp, dx, dy, dz, inv_dx, inv_dy, inv_dz, n_grid_x, n_grid_y, lpx, lpy, lpz)
+	wx0_avg = GIMP_shape_function_and_gradient_components_avg[0]
+	wy0_avg = GIMP_shape_function_and_gradient_components_avg[1]
+	wz0_avg = GIMP_shape_function_and_gradient_components_avg[2]
+	wx1_avg = GIMP_shape_function_and_gradient_components_avg[3]
+	wy1_avg = GIMP_shape_function_and_gradient_components_avg[4]
+	wz1_avg = GIMP_shape_function_and_gradient_components_avg[5]
+	wx2_avg = GIMP_shape_function_and_gradient_components_avg[6]
+	wy2_avg = GIMP_shape_function_and_gradient_components_avg[7]
+	wz2_avg = GIMP_shape_function_and_gradient_components_avg[8]
+
+	w_avg = wp.matrix(
+		wx0_avg, wy0_avg, wz0_avg,
+		wx1_avg, wy1_avg, wz1_avg,
+		wx2_avg, wy2_avg, wz2_avg,
+		shape=(3,3)
+	)
+
+	delta_u_GRAD = wp.mat33d()
+	delta_u = wp.vec3d()
+	# Pressure term
+	particle_pressure = wp.float64(0.)
+	particle_old_pressure = wp.float64(0.)
+	particle_pressure_avg = wp.float64(0.)
+	particle_old_pressure_avg = wp.float64(0.)
+	particle_grad_new_p = wp.vec3d()
+
+	# Loop on dofs
+	# Note the indices are not flattened
+	for i in range(0, 3):
+		for j in range(0, 3):
+			for k in range(0, 3):
+				weight = w[i][0] * w[j][1] * w[k][2]
+				weight_grad = wp.vec3d(grad_w[i][0]*w[j][1]*w[k][2], w[i][0]*grad_w[j][1]*w[k][2], w[i][0]*w[j][1]*grad_w[k][2])
+				weight_avg = w_avg[i][0] * w_avg[j][1] * w_avg[k][2]
+
+				ix = bottom_corner_base_int[0] + i
+				iy = bottom_corner_base_int[1] + j
+				iz = bottom_corner_base_int[2] + k
+
+				
+				index_ij_x = ix + iy*(n_grid_x+1) + iz*((n_grid_x+1)*(n_grid_y+1))
+				index_ij_y = index_ij_x + n_nodes
+				index_ij_z = index_ij_x + 2*n_nodes
+				index_ij_p = index_ij_x + 3*n_nodes
+
+				node_solution = wp.vec3d(new_solution[index_ij_x], new_solution[index_ij_y], new_solution[index_ij_z])
+				node_old_solution = wp.vec3d(old_solution[index_ij_x], old_solution[index_ij_y], old_solution[index_ij_z])
+				node_p_solution = new_solution[index_ij_p]
+				node_p_old_solution = old_solution[index_ij_p]
+
+				delta_u_GRAD += wp.outer(weight_grad, node_solution-node_old_solution)
+				delta_u += weight * (node_solution - node_old_solution)
+
+				particle_pressure += weight * node_p_solution
+				particle_old_pressure += weight * node_p_old_solution
+				particle_pressure_avg += weight_avg * node_p_solution
+				particle_old_pressure_avg += weight_avg * node_p_old_solution
+				particle_grad_new_p += weight_grad * node_p_solution
+
+	old_F = deformation_gradient_total_old[p]
+	particle_old_J = wp.determinant(old_F)
+
+	incr_F = wp.identity(n=3, dtype=wp.float64) + delta_u_GRAD
+	incr_F_inv = wp.inverse(incr_F)
+	new_F = incr_F @ old_F
+	deformation_gradient_total_new[p] = new_F
+
+	# Neo-Hookean: From deformation gradient to stress
+	new_F_inv = wp.inverse(new_F)
+	particle_J = wp.determinant(new_F)
+	particle_PK1_stress = lame_mu * (new_F - wp.transpose(new_F_inv)) + lame_lambda * wp.log(particle_J) * wp.transpose(new_F_inv)
+	particle_Cauchy_stress = float64_one/particle_J * particle_PK1_stress @ wp.transpose(new_F)
+	particle_Cauchy_stress_array[p] = particle_Cauchy_stress
+
+
+	new_p_vol = p_vol * particle_J
+	new_p_rho = p_rho / particle_J
+	phi_s_initial = wp.float64(1.) - phi_initial
+	new_p_porosity = wp.float64(1.0) - phi_s_initial/particle_J
+	new_p_mixture_rho = new_p_porosity*wp.float64(1.0) + (wp.float64(1.0)-new_p_porosity)*p_rho 
+
+	# Porous media
+	mobility = mobility_constant # assuming constant
+
+	# PPP stabilization parameter
+	tau = wp.float64(0.5)/lame_mu
+
+	# Get external force
+	f_ext = wp.vec3d()
+	if particle_external_flag_array[p]==True:
+		f_ext = wp.vec3d(point_load_value_x*(current_step+float64_one)/total_steps, point_load_value_y*(current_step+float64_one)/total_steps, point_load_value_z*(current_step+float64_one)/total_steps)
+
+	# Get traction
+	f_traction = wp.vec3d()
+	if particle_traction_flag_array[p]==True:
+		f_traction = wp.vec3d(traction_value_x*dx/PPD, traction_value_y*dy/PPD, traction_value_z*dz/PPD)
+
+	# Penalty term
+	penalty_parameter = youngs_modulus_diff[0] * penalty_factor * (dx/PPD) * (dy/PPD)
+	penalty_residual_x = wp.float64(0.0)
+	penalty_residual_y = wp.float64(0.0)
+	penalty_residual_z = wp.float64(0.0)
+
+
+	current_height = footing_initial_height + (current_step+float64_one) * footing_incr_disp
+	if (x_particles[p][2] >= current_height) and (x_particles[p][0]>footing_region_min_x) and (x_particles[p][0]<footing_region_max_x) and (x_particles[p][1]>footing_region_min_y) and (x_particles[p][1]<footing_region_max_y):
+		new_p = x_particles[p] + delta_u
+		penetration = current_height - new_p[2]
+		penalty_residual_z = -penetration * penalty_parameter
+
+		wp.atomic_add(indentation_force, 0, -penalty_residual_z)
+		wp.atomic_add(indentation_force_array, int(current_step), -penalty_residual_z)
+
+	# Momentum balance & Mass balance
+	# Note the indices are not flattened
+	for i in range(0, 3):
+		for j in range(0, 3):
+			for k in range(0, 3):
+				weight = w[i][0] * w[j][1] * w[k][2]
+				weight_GRAD = wp.vec3d(grad_w[i][0]*w[j][1]*w[k][2], w[i][0]*grad_w[j][1]*w[k][2], w[i][0]*w[j][1]*grad_w[k][2])
+				weight_grad = incr_F_inv @ weight_GRAD # NOTE here is incr_F_inv
+
+				weight_avg = w_avg[i][0] * w_avg[j][1] * w_avg[k][2]
+
+				ix = bottom_corner_base_int[0] + i
+				iy = bottom_corner_base_int[1] + j
+				iz = bottom_corner_base_int[2] + k
+
+				index_ij_x = ix + iy*(n_grid_x+1) + iz*((n_grid_x+1)*(n_grid_y+1))
+				index_ij_y = index_ij_x + n_nodes
+				index_ij_z = index_ij_x + 2*n_nodes
+				index_ij_p = index_ij_x + 3*n_nodes
+
+				# Momentum balance
+				rhs_value = (-weight_grad @ (particle_Cauchy_stress - particle_pressure*wp.identity(n=3, dtype=wp.float64)) + weight * new_p_mixture_rho * standard_gravity) * new_p_vol # Updated Lagrangian
+
+				if (boundary_flag_array[index_ij_x]==False and activate_flag_array[index_ij_x]==True):
+					wp.atomic_add(rhs, index_ij_x, rhs_value[0])
+
+				if (boundary_flag_array[index_ij_y]==False and activate_flag_array[index_ij_y]==True):
+					wp.atomic_add(rhs, index_ij_y, rhs_value[1])
+
+				if (boundary_flag_array[index_ij_z]==False and activate_flag_array[index_ij_z]==True):
+					wp.atomic_add(rhs, index_ij_z, rhs_value[2])
+					wp.atomic_add(rhs, index_ij_z, penalty_residual_z * weight)
+
+				# Mass balance
+				rhs_mass_value = (weight * (wp.log(particle_J)-wp.log(particle_old_J))
+							  + wp.dot(weight_grad, (mobility * particle_grad_new_p)) * dt
+							  ) * new_p_vol
+
+				if (boundary_flag_array[index_ij_p]==False and activate_flag_array[index_ij_p]==True):
+					wp.atomic_add(rhs, index_ij_p, rhs_mass_value)
+
+				# PPP stabilization
+				rhs_ppp = (tau * (weight-weight_avg) * (particle_pressure - particle_pressure_avg - (particle_old_pressure - particle_old_pressure_avg))) * new_p_vol
+				if (boundary_flag_array[index_ij_p]==False and activate_flag_array[index_ij_p]==True):
+					wp.atomic_add(rhs, index_ij_p, rhs_ppp) 
+
+
+
 
 @wp.kernel
 def set_diagnal_component_for_boundary_and_deactivated_dofs_2d(boundary_flag_array: wp.array(dtype=wp.bool),
@@ -880,6 +1326,19 @@ def set_diagnal_component_for_boundary_and_deactivated_dofs_coupled_2d(boundary_
 		cols[75*n_matrix_size + dof_id] = dof_id
 		vals[75*n_matrix_size + dof_id] = wp.float64(1.0)
 
+@wp.kernel
+def set_diagnal_component_for_boundary_and_deactivated_dofs_coupled_3d(boundary_flag_array: wp.array(dtype=wp.bool),
+																	   activate_flag_array: wp.array(dtype=wp.bool),
+																	   rows: wp.array(dtype=wp.int32),
+																	   cols: wp.array(dtype=wp.int32),
+																	   vals: wp.array(dtype=wp.float64),
+																	   n_matrix_size: wp.int32):
+	dof_id = wp.tid()
+
+	if boundary_flag_array[dof_id]==True or activate_flag_array[dof_id]==False:
+		rows[125*4*n_matrix_size + dof_id] = dof_id
+		cols[125*4*n_matrix_size + dof_id] = dof_id
+		vals[125*4*n_matrix_size + dof_id] = wp.float64(1.)
 
 @wp.kernel
 def from_increment_to_solution(increment_iteration: wp.array(dtype=wp.float64),
@@ -1030,6 +1489,97 @@ def G2P_coupled_2d(GIMP_lp: wp.array(dtype=wp.vec2d),
 			particle_new_p += weight * new_solution[index_ij_p]
 
 	
+
+	# Set old to new
+	deformation_gradient_total_old[p] = deformation_gradient_total_new[p]
+	left_Cauchy_Green_old[p] = left_Cauchy_Green_new[p]
+
+	x_particles[p] += delta_u
+
+	particle_pressure_array[p] = particle_new_p
+
+
+@wp.kernel
+def G2P_coupled_3d(GIMP_lp: wp.array(dtype=wp.vec3d),
+				   x_particles: wp.array(dtype=wp.vec3d),
+				   dx: wp.float64,
+				   dy: wp.float64,
+				   dz: wp.float64,
+				   inv_dx: wp.float64,
+				   inv_dy: wp.float64,
+				   inv_dz: wp.float64,
+				   n_grid_x: wp.int32,
+				   n_grid_y: wp.int32,
+				   n_nodes: wp.int32,
+				   old_solution: wp.array(dtype=wp.float64),
+				   new_solution: wp.array(dtype=wp.float64),
+				   deformation_gradient_total_old: wp.array(dtype=wp.mat33d),
+				   deformation_gradient_total_new: wp.array(dtype=wp.mat33d),
+				   left_Cauchy_Green_old: wp.array(dtype=wp.mat33d),
+				   left_Cauchy_Green_new: wp.array(dtype=wp.mat33d),
+				   particle_pressure_array: wp.array(dtype=wp.float64)
+				   ):
+	p = wp.tid()
+
+	float64_one = wp.float64(1.0)
+	float64_zero = wp.float64(0.0)
+
+	lpx = GIMP_lp[p][0]
+	lpy = GIMP_lp[p][1]
+	lpz = GIMP_lp[p][2]
+
+	# GIMP
+	bottom_corner = x_particles[p] - wp.vec3d(lpx, lpy, lpz)
+	bottom_corner_base_x = bottom_corner[0]*inv_dx + wp.float64(1e-8)
+	bottom_corner_base_y = bottom_corner[1]*inv_dy + wp.float64(1e-8)
+	bottom_corner_base_z = bottom_corner[2]*inv_dz + wp.float64(1e-8)
+	bottom_corner_base_int = wp.vector(wp.int(bottom_corner_base_x), wp.int(bottom_corner_base_y), wp.int(bottom_corner_base_z))
+	bottom_corner_base = wp.vector(wp.float64(bottom_corner_base_int[0]), wp.float64(bottom_corner_base_int[1]), wp.float64(bottom_corner_base_int[2]))
+
+	# Shape function
+	GIMP_shape_function_and_gradient_components = get_GIMP_shape_function_and_gradient_3d(x_particles[p], dx, dy, dz, inv_dx, inv_dy, inv_dz, lpx, lpy, lpz)
+	wx0 = GIMP_shape_function_and_gradient_components[0]
+	wy0 = GIMP_shape_function_and_gradient_components[1]
+	wz0 = GIMP_shape_function_and_gradient_components[2]
+	wx1 = GIMP_shape_function_and_gradient_components[3]
+	wy1 = GIMP_shape_function_and_gradient_components[4]
+	wz1 = GIMP_shape_function_and_gradient_components[5]
+	wx2 = GIMP_shape_function_and_gradient_components[6]
+	wy2 = GIMP_shape_function_and_gradient_components[7]
+	wz2 = GIMP_shape_function_and_gradient_components[8]
+
+	w = wp.matrix(
+		wx0, wy0, wz0,
+		wx1, wy1, wz1,
+		wx2, wy2, wz2,
+		shape=(3,3)
+		)
+
+	# Loop on dofs
+	delta_u = wp.vec3d()
+	particle_new_p = wp.float64(0.0)
+	# flattened loop
+	for flattened_id in range(27):
+		i = wp.int(flattened_id/9)
+		j = wp.mod(wp.int(flattened_id/3), 3)
+		k = wp.mod(flattened_id, 3)
+
+		weight = w[i][0] * w[j][1] * w[k][2]
+
+		ix = bottom_corner_base_int[0] + i
+		iy = bottom_corner_base_int[1] + j
+		iz = bottom_corner_base_int[2] + k
+
+		index_ij_x = ix + iy*(n_grid_x+1) + iz*((n_grid_x+1)*(n_grid_y+1))
+		index_ij_y = index_ij_x + n_nodes
+		index_ij_z = index_ij_x + 2*n_nodes
+		index_ij_p = index_ij_x + 3*n_nodes
+
+		node_new_solution = wp.vec3d(new_solution[index_ij_x], new_solution[index_ij_y], new_solution[index_ij_z])
+		node_old_solution = wp.vec3d(old_solution[index_ij_x], old_solution[index_ij_y], old_solution[index_ij_z])
+
+		delta_u += weight * (node_new_solution - node_old_solution)
+		particle_new_p += weight * new_solution[index_ij_p]
 
 	# Set old to new
 	deformation_gradient_total_old[p] = deformation_gradient_total_new[p]
