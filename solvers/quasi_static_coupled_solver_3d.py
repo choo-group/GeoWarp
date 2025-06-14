@@ -42,6 +42,16 @@ class DofStruct:
 	activate_flag_array: wp.array(dtype=wp.bool)
 	boundary_flag_array: wp.array(dtype=wp.bool)
 
+@wp.kernel
+def get_indentation_loss(indentation_force_array: wp.array(dtype=wp.float64),
+								 indentation_force: wp.array(dtype=wp.float64),
+								 loss: wp.array(dtype=wp.float64),
+								 footing_incr_disp: wp.float64,
+								 total_steps: wp.float64
+								 ):
+	loss[0] = (indentation_force[0]/(wp.abs(footing_incr_disp)*total_steps) - wp.float64(13567.27337196))**wp.float64(2.) # The magic number 13567.27337196 is from E = 1e4 kPa
+	
+	
 
 class quasi_static_coupled_solver_3d:
 	def __init__(self,
@@ -97,6 +107,7 @@ class quasi_static_coupled_solver_3d:
 
 		# Material properties
 		self.youngs_modulus = material_dict['youngs_modulus']
+		print('self.youngs_modulus:', self.youngs_modulus)
 		self.poisson_ratio = material_dict['poisson_ratio']
 		self.lame_lambda = self.youngs_modulus*self.poisson_ratio / ((1.0+self.poisson_ratio) * (1.0-2.0*self.poisson_ratio))
 		self.lame_mu = self.youngs_modulus / (2.0*(1.0+self.poisson_ratio))
@@ -150,6 +161,8 @@ class quasi_static_coupled_solver_3d:
 		self.indentation_force = wp.zeros(shape=1, dtype=wp.float64, requires_grad=True)
 		self.indentation_force_array = wp.zeros(shape=25, dtype=wp.float64, requires_grad=True)
 		self.indentation_force_list = np.empty(0)
+		self.loss = wp.zeros(shape=1, dtype=wp.float64, requires_grad=True)
+		self.E_grad = None
 
 		# ============ Warp arrays (grid and matrix system) ============
 		self.rhs = wp.zeros(shape=self.n_matrix_size, dtype=wp.float64, requires_grad=True)
@@ -190,6 +203,42 @@ class quasi_static_coupled_solver_3d:
 		self.selector_x_list, self.selector_y_list, self.selector_z_list, self.selector_p_list, self.e_x_list, self.e_y_list, self.e_z_list, self.e_p_list = precompute_seed_vectors_coupled_3d(self.n_grid_x, self.n_grid_y, self.n_grid_z, self.n_nodes, self.n_matrix_size, self.max_selector_length)
 
 	# ============ Class functions ============
+	def reinit_everything(self):
+		particles_pos_np = init_particles_rectangle_3d(self.start_x, self.start_y, self.start_z, self.end_x, self.end_y, self.end_z, self.dx, self.n_grid_x, self.n_grid_y, self.n_grid_z, self.PPD, self.n_particles)
+		self.x_particles = wp.from_numpy(particles_pos_np, dtype=wp.vec3d)
+
+		self.E_grad = None
+		self.indentation_force_list = np.empty(0)
+
+		self.particle_pressure_array.zero_()
+
+		wp.launch(kernel=initialization,
+				  dim=self.n_particles,
+				  inputs=[self.deformation_gradient_total_new, self.deformation_gradient_total_old, self.left_Cauchy_Green_new, self.left_Cauchy_Green_old])
+
+		wp.launch(kernel=initialize_GIMP_lp_3d,
+				  dim=self.n_particles,
+				  inputs=[self.GIMP_lp, self.GIMP_lp_initial])
+
+	def reset_grid(self, dx, dy, dz):
+		self.dx = dx
+		self.dy = dy
+		self.dz = dz
+
+		self.inv_dx = 1. / self.dx
+		self.inv_dy = 1. / self.dy
+		self.inv_dz = 1. / self.dz
+
+	def reset_youngs_modulus(self, youngs_modulus):
+		self.youngs_modulus = youngs_modulus
+		self.lame_lambda = self.youngs_modulus*self.poisson_ratio / ((1.0+self.poisson_ratio) * (1.0-2.0*self.poisson_ratio))
+		self.lame_mu = self.youngs_modulus / (2.0*(1.0+self.poisson_ratio))
+
+		wp.launch(kernel=initialize_youngs_modulus_diff,
+				  dim=1,
+				  inputs=[self.youngs_modulus_diff, self.youngs_modulus])
+
+
 	def reset(self):
 		self.old_solution.zero_()
 		self.new_solution.zero_()
@@ -205,6 +254,7 @@ class quasi_static_coupled_solver_3d:
 		self.x_P2G_warp.zero_()
 		wps.bsr_set_zero(self.bsr_matrix_P2G)
 
+
 	def newton_iter(self, current_step, total_steps):
 		for iter_id in range(self.n_iter):
 			self.rhs.zero_()
@@ -214,7 +264,8 @@ class quasi_static_coupled_solver_3d:
 
 			self.indentation_force.zero_()
 			self.indentation_force_array.zero_()
-			# TODO: loss
+			
+			self.loss.zero_()
 
 			tape = wp.Tape()
 			with tape:
@@ -224,6 +275,10 @@ class quasi_static_coupled_solver_3d:
 							  inputs=[self.x_particles, self.dx, self.dy, self.dz, self.inv_dx, self.inv_dy, self.inv_dz, self.dt, self.n_grid_x, self.n_grid_y, self.n_nodes, self.PPD, self.old_solution, self.new_solution, self.deformation_gradient_total_old, self.deformation_gradient_total_new, self.left_Cauchy_Green_old, self.left_Cauchy_Green_new, self.particle_external_flag_array, self.particle_traction_flag_array, self.particle_Cauchy_stress_array, self.phi_initial, self.mobility_constant, self.gravity_mag, self.traction_value_x, self.traction_value_y, self.traction_value_z, self.point_load_value_x, self.point_load_value_y, self.point_load_value_z, self.footing_region_min_x, self.footing_region_max_x, self.footing_region_min_y, self.footing_region_max_y, self.footing_initial_height, self.footing_incr_disp, self.penalty_factor, current_step, total_steps, self.youngs_modulus_diff, self.poisson_ratio, self.p_vol, self.p_rho, self.GIMP_lp, self.dofStruct.boundary_flag_array, self.dofStruct.activate_flag_array, self.rhs, self.indentation_force, self.indentation_force_array])
 				else:
 					raise ValueError(f"Unimplemented material model: {self.material_name}")
+
+				wp.launch(kernel=get_indentation_loss,
+							 dim=1,
+							 inputs=[self.indentation_force_array, self.indentation_force, self.loss, self.footing_incr_disp, total_steps])
 
 			# Assemble the sparse Jacobian matrix using automatic differentiation
 			# Sparse differentiation
@@ -264,6 +319,10 @@ class quasi_static_coupled_solver_3d:
 						tape.zero()
 
 						pattern_id = pattern_id + 1
+
+			if current_step == total_steps-1:
+				tape.backward(self.loss)
+				self.E_grad = self.youngs_modulus_diff.grad.numpy()
 
 			tape.reset()
 

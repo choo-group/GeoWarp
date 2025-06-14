@@ -598,7 +598,8 @@ def assemble_residual(x_particles: wp.array(dtype=wp.vec3d),
                       dt: wp.float64,
                       indentation_force_array: wp.array(dtype=wp.float64),
                       indentation_force: wp.array(dtype=wp.float64),
-                      n_particles: wp.int32
+                      n_particles: wp.int32,
+                      footing_initial_height: wp.float64
                       ):
     p = wp.tid()
 
@@ -783,8 +784,7 @@ def assemble_residual(x_particles: wp.array(dtype=wp.vec3d),
     penalty_residual_z = wp.float64(0.0)
 
 
-    original_height = end_z-dz/PPD
-    current_height = original_height + (step+wp.float64(1.0)) * wp.float64(-0.02)
+    current_height = footing_initial_height + (step+wp.float64(1.0)) * wp.float64(-0.02)
     if (x_particles[p][2] >= current_height) and (x_particles[p][0]<dx+wp.float64(1.)) and (x_particles[p][1]<dy+wp.float64(1.)): #(wp.norm_l2(corner_point-x_particles[p]) <= wp.float64(1.0)):
         new_p = x_particles[p] + delta_u
         penetration = current_height - new_p[2]
@@ -1188,6 +1188,8 @@ end_x = start_x + 5.0
 end_y = start_y + 5.0
 end_z = start_z + 5.0
 
+footing_initial_height = end_z - dz/PPD
+
 
 particle_pos_np = init_particle_position(start_x, start_y, start_z, end_x, end_y, end_z, dx, n_grid_x, n_grid_y, n_grid_z, PPD, n_particles)
 
@@ -1435,7 +1437,7 @@ for training_iter in range(10):
                 # assemble residual
                 wp.launch(kernel=assemble_residual,
                           dim=n_particles,
-                          inputs=[x_particles, inv_dx, inv_dy, inv_dz, dx, dy, dz, rhs, new_solution, old_solution, p_vol, p_rho, youngs_modulus_diff, poisson_ratio, deformation_gradient, particle_boundary_flag_array, n_grid_x, n_grid_y, n_nodes, dofStruct, step, PPD, end_y, end_z, GIMP_lp, dt, indentation_force_array, indentation_force, n_particles])
+                          inputs=[x_particles, inv_dx, inv_dy, inv_dz, dx, dy, dz, rhs, new_solution, old_solution, p_vol, p_rho, youngs_modulus_diff, poisson_ratio, deformation_gradient, particle_boundary_flag_array, n_grid_x, n_grid_y, n_nodes, dofStruct, step, PPD, end_y, end_z, GIMP_lp, dt, indentation_force_array, indentation_force, n_particles, footing_initial_height])
                 # toc = time.perf_counter()
                 # print('Time for assemble_residual:', toc-tic) 
 
