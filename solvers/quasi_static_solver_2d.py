@@ -128,7 +128,7 @@ class quasi_static_solver_2d:
 		# ============ Initialization ============
 		wp.launch(kernel=initialization,
 				  dim=self.n_particles,
-				  inputs=[self.deformation_gradient_total_new, self.deformation_gradient_total_old, self.left_Cauchy_Green_new, self.left_Cauchy_Green_old, self.x_particles])
+				  inputs=[self.deformation_gradient_total_new, self.deformation_gradient_total_old, self.left_Cauchy_Green_new, self.left_Cauchy_Green_old])
 
 		wp.launch(kernel=initialize_GIMP_lp_2d,
 				  dim=self.n_particles,

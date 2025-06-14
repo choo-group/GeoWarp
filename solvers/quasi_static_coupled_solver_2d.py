@@ -22,7 +22,7 @@ import os
 
 print("\n" + "=" * 72)
 print(r"""
-	____ _____ _____        ___    ____  ____  
+   ____ _____ _____        ___    ____  ____  
   / ___| ____/ _ \ \      / / \  |  _ \|  _ \ 
  | |  _|  _|| | | \ \ /\ / / _ \ | |_) | |_) |
  | |_| | |__| |_| |\ V  V / ___ \|  _ <|  __/ 
@@ -93,9 +93,6 @@ class quasi_static_coupled_solver_2d:
 		self.lame_mu = self.youngs_modulus / (2.0*(1.0+self.poisson_ratio))
 		self.material_name = material_dict['material_name']
 
-		if self.material_name=='J2':
-			self.kappa = material_dict['kappa']
-
 		# Porous media properties
 		self.phi_initial = porous_media_dict['phi_initial']
 		self.mobility_constant = porous_media_dict['mobility_constant']
@@ -151,7 +148,7 @@ class quasi_static_coupled_solver_2d:
 		# ============ Initialization ============
 		wp.launch(kernel=initialization,
 				  dim=self.n_particles,
-				  inputs=[self.deformation_gradient_total_new, self.deformation_gradient_total_old, self.left_Cauchy_Green_new, self.left_Cauchy_Green_old, self.x_particles])
+				  inputs=[self.deformation_gradient_total_new, self.deformation_gradient_total_old, self.left_Cauchy_Green_new, self.left_Cauchy_Green_old])
 
 		wp.launch(kernel=initialize_GIMP_lp_2d,
 				  dim=self.n_particles,
