@@ -1,0 +1,7 @@
+python==3.10.17
+numpy==2.2.2
+warp-lang==1.7.0
+meshio==5.3.5
+scipy==1.14.1
+pyamg==5.2.1
+pypardiso==0.4.6
