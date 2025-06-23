@@ -44,8 +44,8 @@ GeoWarp/
 │   │   └── cantilever_beam_cpGIMP.py
 │   ├── consolidation/
 │   │   └── terzaghi_cpGIMP.py
-│   ├── 3D_indentation/
-│   │   └── 3d_indentation_coupled_cpGIMP.py
+│   └── 3D_indentation/
+│       └── 3d_indentation_coupled_cpGIMP.py
 ├── solvers/
 │   ├── quasi_static_solver_2d.py               # 2D quasi-static implicit MPM solver 
 │   ├── quasi_static_coupled_solver_2d.py       # 2D coupled quasi-static implicit MPM solver
