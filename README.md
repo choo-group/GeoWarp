@@ -59,4 +59,12 @@ GeoWarp/
 ```
 
 ## Citation
-If you find GeoWarp useful, please cite us. TODO
+If you find GeoWarp useful, please cite us:
+```
+@article{zhao2025,
+  author    = {Yidong Zhao and Xuan Li and Chenfanfu Jiang and Jinhyun Choo},
+  title     = {{GeoWarp: An automatically differentiable and GPU-accelerated implicit MPM framework for geomechanics based on NVIDIA Warp}},
+  journal   = {arXiv preprint arXiv:2507.09435},
+  year      = {2025}
+}
+```
