@@ -10,7 +10,7 @@ GeoWarp is an open-source simulation framework tailored for geomechanics, featur
 - Reverse-mode automatic differentiation (AD).
 - Support for both forward simulations and inverse analyses.
 
-Please refer to our [paper](https://arxiv.org/abs/2507.09435) for details.
+Please refer to our [work](https://arxiv.org/abs/2507.09435) for details.
 
 ## Getting started
 ### Installation
