@@ -10,7 +10,7 @@ GeoWarp is an open-source simulation framework tailored for geomechanics, featur
 - Reverse-mode automatic differentiation (AD).
 - Support for both forward simulations and inverse analyses.
 
-Please refer to our [work](https://arxiv.org/abs/2507.09435) for details.
+Please refer to our [work](https://doi.org/10.1016/j.advengsoft.2025.104072) for details.
 
 ## Getting started
 ### Installation
@@ -63,10 +63,13 @@ GeoWarp/
 ## Citation
 If you find GeoWarp useful, please cite us:
 ```
-@article{zhao2025,
-  author    = {Yidong Zhao and Xuan Li and Chenfanfu Jiang and Jinhyun Choo},
-  title     = {{GeoWarp: An automatically differentiable and GPU-accelerated implicit MPM framework for geomechanics based on NVIDIA Warp}},
-  journal   = {arXiv preprint arXiv:2507.09435},
-  year      = {2025}
+@article{zhao2026,
+  author  = {Yidong Zhao and Xuan Li and Chenfanfu Jiang and Jinhyun Choo},
+  title   = {{GeoWarp: An automatically differentiable and GPU-accelerated implicit MPM framework for geomechanics based on NVIDIA Warp}},
+  journal = {Advances in Engineering Software},
+  volume  = {212},
+  pages   = {104072},
+  year    = {2026},
+  doi     = {https://doi.org/10.1016/j.advengsoft.2025.104072}
 }
 ```
